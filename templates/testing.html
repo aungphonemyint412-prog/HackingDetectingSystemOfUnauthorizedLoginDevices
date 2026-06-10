@@ -1,0 +1,197 @@
+{% extends 'base.html' %}
+{% block title %}Testing Panel – HDS{% endblock %}
+{% block page_title %}<i class="fas fa-flask me-2 text-primary"></i>Testing &amp; Simulation Panel{% endblock %}
+
+{% block content %}
+
+<div class="alert alert-info hds-alert">
+  <i class="fas fa-circle-info me-2"></i>
+  <strong>Demonstration Tool.</strong>
+  Use the scenarios below to test the detection engine without waiting for
+  real suspicious events. Each simulation writes a login record to the
+  database and evaluates all detection rules in real time.
+</div>
+
+<div class="row g-4">
+
+  <!-- ── Simulation Scenarios ──────────────────────────────────── -->
+  <div class="col-lg-8">
+    <div class="row g-3">
+
+      <!-- New IP -->
+      <div class="col-md-6">
+        <div class="test-card">
+          <div class="test-card-icon bg-danger-subtle text-danger">
+            <i class="fas fa-globe fa-lg"></i>
+          </div>
+          <h6 class="fw-bold mt-3">Simulate New IP Address</h6>
+          <p class="text-muted small">
+            Creates a successful login from a foreign IP
+            (<code>185.220.101.99</code>) not in your login history.
+            Triggers Rule R1.
+          </p>
+          <form method="POST" action="{{ url_for('simulate') }}">
+            <input type="hidden" name="scenario" value="new_ip">
+            <button type="submit" class="btn btn-sm btn-outline-danger w-100">
+              <i class="fas fa-play me-1"></i>Run Simulation
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- New Device -->
+      <div class="col-md-6">
+        <div class="test-card">
+          <div class="test-card-icon bg-warning-subtle text-warning">
+            <i class="fas fa-mobile-screen-button fa-lg"></i>
+          </div>
+          <h6 class="fw-bold mt-3">Simulate New Device Type</h6>
+          <p class="text-muted small">
+            Creates a login from a device type (Mobile/PC) different to
+            your previous sessions. Triggers Rule R2 and R3.
+          </p>
+          <form method="POST" action="{{ url_for('simulate') }}">
+            <input type="hidden" name="scenario" value="new_device">
+            <button type="submit" class="btn btn-sm btn-outline-warning w-100">
+              <i class="fas fa-play me-1"></i>Run Simulation
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Unusual Hour -->
+      <div class="col-md-6">
+        <div class="test-card">
+          <div class="test-card-icon bg-purple-subtle text-purple" style="background:#ede9fe;color:#7c3aed;">
+            <i class="fas fa-moon fa-lg"></i>
+          </div>
+          <h6 class="fw-bold mt-3">Simulate Unusual-Hour Login</h6>
+          <p class="text-muted small">
+            Injects a record timestamped at 02:17 UTC to demonstrate
+            detection of logins between midnight and 5 AM. Triggers Rule R5.
+          </p>
+          <form method="POST" action="{{ url_for('simulate') }}">
+            <input type="hidden" name="scenario" value="unusual_hour">
+            <button type="submit" class="btn btn-sm btn-outline-secondary w-100"
+                    style="color:#7c3aed;border-color:#7c3aed;">
+              <i class="fas fa-play me-1"></i>Run Simulation
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Brute Force -->
+      <div class="col-md-6">
+        <div class="test-card">
+          <div class="test-card-icon bg-danger-subtle text-danger">
+            <i class="fas fa-shield-virus fa-lg"></i>
+          </div>
+          <h6 class="fw-bold mt-3">Simulate Brute-Force Attack</h6>
+          <p class="text-muted small">
+            Inserts 5 failed login records from IP <code>203.0.113.55</code>
+            within the detection window to trigger a brute-force alert.
+          </p>
+          <form method="POST" action="{{ url_for('simulate') }}">
+            <input type="hidden" name="scenario" value="brute_force">
+            <button type="submit" class="btn btn-sm btn-outline-danger w-100">
+              <i class="fas fa-play me-1"></i>Run Simulation
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Test Alert Email -->
+      <div class="col-md-6">
+        <div class="test-card">
+          <div class="test-card-icon bg-info-subtle text-info">
+            <i class="fas fa-envelope fa-lg"></i>
+          </div>
+          <h6 class="fw-bold mt-3">Test Security Alert Email</h6>
+          <p class="text-muted small">
+            Sends a sample suspicious-login alert email to
+            <strong>{{ current_user.email }}</strong>.
+            Requires <code>MAIL_USERNAME</code> and
+            <code>MAIL_PASSWORD</code> in <code>.env</code>.
+          </p>
+          <form method="POST" action="{{ url_for('simulate') }}">
+            <input type="hidden" name="scenario" value="test_email">
+            <button type="submit" class="btn btn-sm btn-outline-info w-100">
+              <i class="fas fa-paper-plane me-1"></i>Send Test Alert Email
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Test OTP Email -->
+      <div class="col-md-6">
+        <div class="test-card">
+          <div class="test-card-icon bg-primary-subtle text-primary">
+            <i class="fas fa-mobile-screen-button fa-lg"></i>
+          </div>
+          <h6 class="fw-bold mt-3">Test 2FA OTP Email</h6>
+          <p class="text-muted small">
+            Sends a sample 6-digit verification code email to
+            <strong>{{ current_user.email }}</strong>.
+            The code will be shown in the flash message for reference.
+          </p>
+          <form method="POST" action="{{ url_for('simulate') }}">
+            <input type="hidden" name="scenario" value="test_otp_email">
+            <button type="submit" class="btn btn-sm btn-outline-primary w-100">
+              <i class="fas fa-key me-1"></i>Send Test OTP Email
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Clear Data -->
+      <div class="col-md-6">
+        <div class="test-card border-danger">
+          <div class="test-card-icon bg-danger-subtle text-danger">
+            <i class="fas fa-trash-can fa-lg"></i>
+          </div>
+          <h6 class="fw-bold mt-3 text-danger">Clear All Data</h6>
+          <p class="text-muted small">
+            Deletes all login history and alerts for your account.
+            Use this to reset before a fresh demonstration.
+          </p>
+          <form method="POST" action="{{ url_for('clear_test_data') }}"
+                onsubmit="return confirm('Delete ALL login history and alerts for your account?')">
+            <button type="submit" class="btn btn-sm btn-danger w-100">
+              <i class="fas fa-trash-can me-1"></i>Clear My Data
+            </button>
+          </form>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Detection Rules Reference ─────────────────────────────── -->
+  <div class="col-lg-4">
+    <div class="hds-card sticky-top" style="top:80px;">
+      <div class="hds-card-header">
+        <i class="fas fa-list-check me-2 text-primary"></i>Active Detection Rules
+      </div>
+      <div class="hds-card-body p-0">
+        {% for badge, title, desc in [
+          ('R1','New IP Address',       'IP not found in login history'),
+          ('R2','New Device Type',      'PC / Mobile / Tablet not seen before'),
+          ('R3','New Browser',          'Browser family not previously used'),
+          ('R4','New OS',               'Operating system family not seen before'),
+          ('R5','Unusual Hours',        'Login between 00:00 – 04:59 UTC'),
+          ('R6','Rapid Logins',         '3+ successes within 10 minutes'),
+        ] %}
+        <div class="rule-ref-row">
+          <span class="rule-ref-badge">{{ badge }}</span>
+          <div>
+            <div class="fw-semibold small">{{ title }}</div>
+            <div class="text-muted" style="font-size:.75rem;">{{ desc }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

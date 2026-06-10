@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+{% block title %}Login History – HDS{% endblock %}
+{% block page_title %}<i class="fas fa-clock-rotate-left me-2 text-primary"></i>Login History{% endblock %}
+
+{% block content %}
+
+<!-- ── Filter Bar ────────────────────────────────────────────────── -->
+<div class="hds-card mb-4">
+  <div class="hds-card-body d-flex flex-wrap gap-2 align-items-center">
+    <span class="text-muted me-2 small fw-semibold">FILTER:</span>
+    {% for value, label in [('all','All'),('success','Successful'),('failed','Failed'),('suspicious','Suspicious')] %}
+    <a href="{{ url_for('login_history', status=value) }}"
+       class="btn btn-sm {% if filter_status == value %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+      {% if value == 'suspicious' %}<i class="fas fa-triangle-exclamation me-1"></i>
+      {% elif value == 'success'  %}<i class="fas fa-check me-1"></i>
+      {% elif value == 'failed'   %}<i class="fas fa-xmark me-1"></i>
+      {% else %}<i class="fas fa-list me-1"></i>{% endif %}
+      {{ label }}
+    </a>
+    {% endfor %}
+    <span class="ms-auto text-muted small">
+      {{ logins.total }} record{{ 's' if logins.total != 1 }}
+    </span>
+  </div>
+</div>
+
+<!-- ── Table ─────────────────────────────────────────────────────── -->
+<div class="hds-card">
+  <div class="hds-card-body p-0">
+    <div class="table-responsive">
+      <table class="table hds-table mb-0">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Status</th>
+            <th>2FA</th>
+            <th>IP Address</th>
+            <th>Device</th>
+            <th>Browser</th>
+            <th>OS</th>
+            <th>Login Time (UTC)</th>
+            <th>Suspicious Reasons</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for login in logins.items %}
+          <tr class="{% if login.is_suspicious %}row-suspicious{% elif login.login_status in ('failed','failed_2fa') %}row-failed{% endif %}">
+            <td class="text-muted small">{{ login.id }}</td>
+
+            <td>
+              {% if login.login_status == 'success' %}
+                {% if login.is_suspicious %}
+                  <span class="badge bg-warning text-dark">
+                    <i class="fas fa-triangle-exclamation me-1"></i>Suspicious
+                  </span>
+                {% else %}
+                  <span class="badge bg-success">
+                    <i class="fas fa-check me-1"></i>Success
+                  </span>
+                {% endif %}
+              {% elif login.login_status == 'failed_2fa' %}
+                <span class="badge bg-danger">
+                  <i class="fas fa-mobile-screen-button me-1"></i>2FA Failed
+                </span>
+              {% else %}
+                <span class="badge bg-danger">
+                  <i class="fas fa-xmark me-1"></i>Failed
+                </span>
+              {% endif %}
+            </td>
+
+            <!-- 2FA column -->
+            <td>
+              {% if login.two_fa_required %}
+                {% if login.two_fa_verified %}
+                  <span class="badge bg-success-subtle text-success border border-success-subtle"
+                        style="font-size:.7rem;">
+                    <i class="fas fa-shield-check me-1"></i>Passed
+                  </span>
+                {% else %}
+                  <span class="badge bg-danger-subtle text-danger border border-danger-subtle"
+                        style="font-size:.7rem;">
+                    <i class="fas fa-shield-xmark me-1"></i>Failed
+                  </span>
+                {% endif %}
+              {% else %}
+                <span class="text-muted" style="font-size:.75rem;">—</span>
+              {% endif %}
+            </td>
+
+            <td><code class="text-muted small">{{ login.ip_address or '—' }}</code></td>
+
+            <td>
+              <i class="fas fa-{% if login.device_type=='Mobile' %}mobile-screen-button{% elif login.device_type=='Tablet' %}tablet-screen-button{% else %}desktop{% endif %} me-1 text-muted small"></i>
+              {{ login.device_type or '—' }}
+            </td>
+
+            <td class="small text-truncate" style="max-width:180px;" title="{{ login.browser }}">
+              {{ login.browser or '—' }}
+            </td>
+
+            <td class="small text-truncate" style="max-width:140px;" title="{{ login.os }}">
+              {{ login.os or '—' }}
+            </td>
+
+            <td class="text-nowrap small text-muted">
+              {{ login.login_time.strftime('%Y-%m-%d %H:%M:%S') }}
+            </td>
+
+            <td class="small text-muted" style="max-width:240px;">
+              {% if login.suspicious_reasons %}
+                <span title="{{ login.suspicious_reasons }}" class="text-warning-emphasis">
+                  <i class="fas fa-triangle-exclamation me-1 text-warning"></i>
+                  {{ login.suspicious_reasons | truncate(60) }}
+                </span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="9" class="text-center text-muted py-5">
+              <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
+              No login records match the selected filter.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── Pagination ─────────────────────────────────────────────────── -->
+{% if logins.pages > 1 %}
+<nav class="mt-4 d-flex justify-content-center">
+  <ul class="pagination pagination-sm">
+    <li class="page-item {% if not logins.has_prev %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for('login_history', page=logins.prev_num, status=filter_status) }}">
+        <i class="fas fa-chevron-left"></i>
+      </a>
+    </li>
+    {% for p in logins.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+      {% if p %}
+      <li class="page-item {% if p == logins.page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('login_history', page=p, status=filter_status) }}">{{ p }}</a>
+      </li>
+      {% else %}
+      <li class="page-item disabled"><span class="page-link">&hellip;</span></li>
+      {% endif %}
+    {% endfor %}
+    <li class="page-item {% if not logins.has_next %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for('login_history', page=logins.next_num, status=filter_status) }}">
+        <i class="fas fa-chevron-right"></i>
+      </a>
+    </li>
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

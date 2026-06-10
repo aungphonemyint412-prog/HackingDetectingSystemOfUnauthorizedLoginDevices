@@ -1,0 +1,177 @@
+{% extends 'base.html' %}
+{% block title %}Profile – HDS{% endblock %}
+{% block page_title %}<i class="fas fa-user-gear me-2 text-primary"></i>Profile{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- ── Account Info ──────────────────────────────────────────── -->
+  <div class="col-lg-4">
+    <div class="hds-card text-center">
+      <div class="hds-card-body py-4">
+        <div class="profile-avatar mx-auto mb-3">
+          {{ current_user.username[0].upper() }}
+        </div>
+        <h5 class="fw-bold mb-1">{{ current_user.username }}</h5>
+        <p class="text-muted small mb-3">{{ current_user.email }}</p>
+
+        <div class="row g-2 text-center mt-2">
+          <div class="col-6">
+            <div class="profile-stat-box">
+              <div class="profile-stat-val">{{ login_count }}</div>
+              <div class="profile-stat-lbl">Successful Logins</div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="profile-stat-box">
+              <div class="profile-stat-val">
+                {{ current_user.created_at.strftime('%Y') }}
+              </div>
+              <div class="profile-stat-lbl">Member Since</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Account details -->
+    <div class="hds-card mt-3">
+      <div class="hds-card-header">
+        <i class="fas fa-circle-info me-2 text-primary"></i>Account Details
+      </div>
+      <div class="hds-card-body">
+        <dl class="row mb-0">
+          <dt class="col-5 text-muted small">Username</dt>
+          <dd class="col-7 small mb-2">{{ current_user.username }}</dd>
+          <dt class="col-5 text-muted small">Email</dt>
+          <dd class="col-7 small mb-2">{{ current_user.email }}</dd>
+          <dt class="col-5 text-muted small">Joined</dt>
+          <dd class="col-7 small mb-0">
+            {{ current_user.created_at.strftime('%d %b %Y') }}
+          </dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Edit Form ─────────────────────────────────────────────── -->
+  <div class="col-lg-8">
+
+    <form method="POST" action="{{ url_for('profile') }}">
+      <!-- Update Email -->
+      <div class="hds-card mb-4">
+        <div class="hds-card-header">
+          <i class="fas fa-envelope me-2 text-primary"></i>Update Email Address
+        </div>
+        <div class="hds-card-body">
+          <div class="mb-3">
+            <label for="email" class="form-label">New Email Address</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fas fa-envelope text-muted"></i></span>
+              <input type="email" class="form-control" id="email" name="email"
+                     value="{{ current_user.email }}" placeholder="Enter new email">
+            </div>
+            <div class="form-text">Security alerts are sent to this address.</div>
+          </div>
+          <button type="submit" name="action" value="email"
+                  class="btn btn-primary btn-sm">
+            <i class="fas fa-save me-1"></i>Update Email
+          </button>
+        </div>
+      </div>
+
+      <!-- Two-Factor Authentication -->
+      <div class="hds-card mb-4">
+        <div class="hds-card-header d-flex align-items-center justify-content-between">
+          <span><i class="fas fa-mobile-screen-button me-2 text-primary"></i>Two-Factor Authentication</span>
+          {% if current_user.two_fa_enabled %}
+          <span class="badge bg-success"><i class="fas fa-check me-1"></i>Enabled</span>
+          {% else %}
+          <span class="badge bg-secondary">Disabled</span>
+          {% endif %}
+        </div>
+        <div class="hds-card-body">
+          {% if current_user.two_fa_enabled %}
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div style="width:42px;height:42px;background:#dcfce7;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <i class="fas fa-shield-check text-success"></i>
+            </div>
+            <div>
+              <div class="fw-semibold">2FA is active</div>
+              <p class="text-muted small mb-0">
+                Every login requires a 6-digit code sent to
+                <strong>{{ current_user.email }}</strong>.
+              </p>
+            </div>
+          </div>
+          <form method="POST" action="{{ url_for('profile') }}"
+                onsubmit="return confirm('Disable Two-Factor Authentication? Your account will be less secure.')">
+            <button type="submit" name="action" value="disable_2fa"
+                    class="btn btn-outline-danger btn-sm">
+              <i class="fas fa-lock-open me-1"></i>Disable 2FA
+            </button>
+          </form>
+          {% else %}
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div style="width:42px;height:42px;background:#fef3c7;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <i class="fas fa-triangle-exclamation text-warning"></i>
+            </div>
+            <div>
+              <div class="fw-semibold">2FA is not enabled</div>
+              <p class="text-muted small mb-0">
+                Enable Two-Factor Authentication to add an extra layer of security.
+                Each login will require a one-time code sent to your email.
+              </p>
+            </div>
+          </div>
+          <form method="POST" action="{{ url_for('profile') }}">
+            <button type="submit" name="action" value="enable_2fa"
+                    class="btn btn-success btn-sm">
+              <i class="fas fa-shield-halved me-1"></i>Enable 2FA
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Change Password -->
+      <div class="hds-card">
+        <div class="hds-card-header">
+          <i class="fas fa-lock me-2 text-primary"></i>Change Password
+        </div>
+        <div class="hds-card-body">
+          <div class="mb-3">
+            <label for="current_password" class="form-label">Current Password</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fas fa-lock text-muted"></i></span>
+              <input type="password" class="form-control" id="current_password"
+                     name="current_password" placeholder="Enter current password">
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="new_password" class="form-label">New Password</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fas fa-lock-open text-muted"></i></span>
+              <input type="password" class="form-control" id="new_password"
+                     name="new_password" placeholder="Minimum 8 characters">
+            </div>
+          </div>
+          <div class="mb-4">
+            <label for="confirm_password" class="form-label">Confirm New Password</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fas fa-check-double text-muted"></i></span>
+              <input type="password" class="form-control" id="confirm_password"
+                     name="confirm_password" placeholder="Repeat new password">
+            </div>
+          </div>
+          <button type="submit" name="action" value="password"
+                  class="btn btn-primary btn-sm">
+            <i class="fas fa-key me-1"></i>Change Password
+          </button>
+        </div>
+      </div>
+    </form>
+
+  </div>
+</div>
+{% endblock %}

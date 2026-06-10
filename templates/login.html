@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block title %}Login – HDS{% endblock %}
+
+{% block content %}
+<div class="auth-page">
+  <div class="auth-card">
+
+    <!-- Brand -->
+    <div class="auth-brand">
+      <i class="fas fa-shield-halved text-primary"></i>
+      <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
+    </div>
+
+    <h2 class="auth-title">Welcome back</h2>
+    <p class="auth-subtitle">Sign in to your account to continue.</p>
+
+    <form method="POST" action="{{ url_for('login') }}" novalidate>
+      <div class="mb-3">
+        <label for="username" class="form-label">Username</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="fas fa-user text-muted"></i></span>
+          <input type="text" class="form-control" id="username" name="username"
+                 placeholder="Enter your username" required autofocus>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <div class="d-flex justify-content-between">
+          <label for="password" class="form-label">Password</label>
+        </div>
+        <div class="input-group">
+          <span class="input-group-text"><i class="fas fa-lock text-muted"></i></span>
+          <input type="password" class="form-control" id="password" name="password"
+                 placeholder="Enter your password" required>
+          <button class="btn btn-outline-secondary" type="button" id="togglePwd"
+                  title="Show/hide password">
+            <i class="fas fa-eye" id="eyeIcon"></i>
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">
+        <i class="fas fa-right-to-bracket me-2"></i>Sign In
+      </button>
+    </form>
+
+    <p class="text-center mt-4 text-muted small">
+      Don't have an account?
+      <a href="{{ url_for('register') }}" class="auth-link">Register here</a>
+    </p>
+
+    <!-- Demo hint -->
+    <div class="demo-hint">
+      <i class="fas fa-circle-info me-1 text-primary"></i>
+      <strong>Demo:</strong> Run <code>python create_test_data.py</code> to create
+      <em>demouser / Password123</em>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.getElementById('togglePwd').addEventListener('click', function () {
+    const pwd  = document.getElementById('password');
+    const icon = document.getElementById('eyeIcon');
+    if (pwd.type === 'password') {
+      pwd.type = 'text';
+      icon.classList.replace('fa-eye', 'fa-eye-slash');
+    } else {
+      pwd.type = 'password';
+      icon.classList.replace('fa-eye-slash', 'fa-eye');
+    }
+  });
+</script>
+{% endblock %}

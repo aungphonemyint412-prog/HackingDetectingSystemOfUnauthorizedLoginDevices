@@ -1,0 +1,255 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard – HDS{% endblock %}
+{% block page_title %}<i class="fas fa-gauge-high me-2 text-primary"></i>Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- ── Stat Cards ───────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+
+  <div class="col-6 col-lg-3">
+    <div class="stat-card stat-total">
+      <div class="stat-icon"><i class="fas fa-key"></i></div>
+      <div class="stat-body">
+        <div class="stat-value">{{ total_logins }}</div>
+        <div class="stat-label">Total Logins</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="stat-card stat-success">
+      <div class="stat-icon"><i class="fas fa-circle-check"></i></div>
+      <div class="stat-body">
+        <div class="stat-value">{{ successful_logins }}</div>
+        <div class="stat-label">Successful</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="stat-card stat-failed">
+      <div class="stat-icon"><i class="fas fa-circle-xmark"></i></div>
+      <div class="stat-body">
+        <div class="stat-value">{{ failed_logins }}</div>
+        <div class="stat-label">Failed</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="stat-card stat-suspicious">
+      <div class="stat-icon"><i class="fas fa-triangle-exclamation"></i></div>
+      <div class="stat-body">
+        <div class="stat-value">{{ suspicious_count }}</div>
+        <div class="stat-label">Suspicious</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Charts Row ───────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+
+  <div class="col-lg-8">
+    <div class="hds-card h-100">
+      <div class="hds-card-header">
+        <i class="fas fa-chart-bar me-2 text-primary"></i>Login Activity – Last 7 Days
+      </div>
+      <div class="hds-card-body">
+        <canvas id="activityChart" style="max-height:220px;"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="hds-card h-100">
+      <div class="hds-card-header">
+        <i class="fas fa-chart-pie me-2 text-primary"></i>Device Breakdown
+      </div>
+      <div class="hds-card-body d-flex align-items-center justify-content-center">
+        <canvas id="deviceChart" style="max-height:220px;max-width:220px;"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Recent Logins ─────────────────────────────────────────────── -->
+<div class="row g-3">
+
+  <div class="col-lg-8">
+    <div class="hds-card">
+      <div class="hds-card-header d-flex justify-content-between align-items-center">
+        <span><i class="fas fa-clock-rotate-left me-2 text-primary"></i>Recent Logins</span>
+        <a href="{{ url_for('login_history') }}" class="btn btn-sm btn-outline-primary">
+          View All
+        </a>
+      </div>
+      <div class="hds-card-body p-0">
+        <div class="table-responsive">
+          <table class="table hds-table mb-0">
+            <thead>
+              <tr>
+                <th>Status</th><th>IP Address</th>
+                <th>Device</th><th>Browser</th>
+                <th>Time (UTC)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for login in recent_logins %}
+              <tr class="{% if login.is_suspicious %}row-suspicious{% elif login.login_status=='failed' %}row-failed{% endif %}">
+                <td>
+                  {% if login.login_status == 'success' %}
+                    {% if login.is_suspicious %}
+                      <span class="badge bg-warning text-dark">
+                        <i class="fas fa-triangle-exclamation me-1"></i>Suspicious
+                      </span>
+                    {% else %}
+                      <span class="badge bg-success">
+                        <i class="fas fa-check me-1"></i>OK
+                      </span>
+                    {% endif %}
+                  {% else %}
+                    <span class="badge bg-danger">
+                      <i class="fas fa-xmark me-1"></i>Failed
+                    </span>
+                  {% endif %}
+                </td>
+                <td><code class="text-muted small">{{ login.ip_address }}</code></td>
+                <td>
+                  <i class="fas fa-{% if login.device_type=='Mobile' %}mobile-screen-button{% elif login.device_type=='Tablet' %}tablet-screen-button{% else %}desktop{% endif %} me-1 text-muted"></i>
+                  {{ login.device_type or '—' }}
+                </td>
+                <td class="text-truncate" style="max-width:160px;">
+                  {{ login.browser or '—' }}
+                </td>
+                <td class="text-muted small text-nowrap">
+                  {{ login.login_time.strftime('%Y-%m-%d %H:%M') }}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-4">No login records yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Recent Alerts ──────────────────────────────────────────── -->
+  <div class="col-lg-4">
+    <div class="hds-card h-100">
+      <div class="hds-card-header d-flex justify-content-between align-items-center">
+        <span><i class="fas fa-bell me-2 text-danger"></i>Recent Alerts</span>
+        <a href="{{ url_for('alerts') }}" class="btn btn-sm btn-outline-danger">
+          View All
+        </a>
+      </div>
+      <div class="hds-card-body p-0">
+        {% for alert in recent_alerts %}
+        <div class="alert-item {% if not alert.is_read %}alert-item-unread{% endif %}">
+          <div class="alert-item-icon
+            {% if alert.alert_type == 'brute_force' %}text-danger
+            {% else %}text-warning{% endif %}">
+            <i class="fas fa-{% if alert.alert_type == 'brute_force' %}shield-virus{% else %}triangle-exclamation{% endif %}"></i>
+          </div>
+          <div class="alert-item-body">
+            <div class="alert-item-type">
+              {{ alert.alert_type.replace('_',' ').title() }}
+              {% if not alert.is_read %}
+              <span class="badge bg-danger ms-1" style="font-size:.6rem;">NEW</span>
+              {% endif %}
+            </div>
+            <div class="alert-item-msg text-muted small text-truncate">{{ alert.message }}</div>
+            <div class="alert-item-time text-muted" style="font-size:.7rem;">
+              {{ alert.created_at.strftime('%Y-%m-%d %H:%M') }}
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-4">
+          <i class="fas fa-check-circle fa-2x mb-2 text-success d-block"></i>
+          No alerts found.
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Activity Chart ───────────────────────────────────────────────
+fetch('/api/login-stats')
+  .then(r => r.json())
+  .then(data => {
+    const labels   = data.map(d => d.date);
+    const totals   = data.map(d => d.total);
+    const suspList = data.map(d => d.suspicious);
+
+    new Chart(document.getElementById('activityChart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Total Logins',
+            data: totals,
+            backgroundColor: 'rgba(37,99,235,.15)',
+            borderColor: '#2563eb',
+            borderWidth: 2,
+            borderRadius: 4,
+          },
+          {
+            label: 'Suspicious',
+            data: suspList,
+            backgroundColor: 'rgba(220,38,38,.15)',
+            borderColor: '#dc2626',
+            borderWidth: 2,
+            borderRadius: 4,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#f1f5f9' } },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+  });
+
+// ── Device Chart ─────────────────────────────────────────────────
+fetch('/api/device-stats')
+  .then(r => r.json())
+  .then(data => {
+    if (!data.length) return;
+    new Chart(document.getElementById('deviceChart'), {
+      type: 'doughnut',
+      data: {
+        labels: data.map(d => d.device),
+        datasets: [{
+          data: data.map(d => d.count),
+          backgroundColor: ['#2563eb','#16a34a','#f59e0b','#dc2626'],
+          borderWidth: 2,
+          borderColor: '#fff',
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12 } },
+        },
+        cutout: '65%',
+      },
+    });
+  });
+</script>
+{% endblock %}

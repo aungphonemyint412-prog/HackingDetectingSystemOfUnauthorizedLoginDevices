@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% block title %}Security Alerts – HDS{% endblock %}
+{% block page_title %}<i class="fas fa-bell me-2 text-danger"></i>Security Alerts{% endblock %}
+
+{% block content %}
+
+{% if alerts.total == 0 %}
+<div class="hds-card text-center py-5">
+  <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
+  <h5 class="text-muted">No security alerts</h5>
+  <p class="text-muted small">Your account has not triggered any alerts yet.</p>
+</div>
+{% else %}
+
+<div class="hds-card">
+  <div class="hds-card-header">
+    {{ alerts.total }} alert{{ 's' if alerts.total != 1 }} recorded
+  </div>
+  <div class="hds-card-body p-0">
+
+    {% for alert in alerts.items %}
+    <div class="alert-row {% if not alert.is_read %}alert-row-unread{% endif %}">
+
+      <!-- Icon column -->
+      <div class="alert-row-icon
+        {% if alert.alert_type == 'brute_force' %}text-danger
+        {% elif alert.alert_type == 'suspicious_login' %}text-warning
+        {% else %}text-info{% endif %}">
+        {% if alert.alert_type == 'brute_force' %}
+          <i class="fas fa-shield-virus fa-lg"></i>
+        {% elif alert.alert_type == 'suspicious_login' %}
+          <i class="fas fa-triangle-exclamation fa-lg"></i>
+        {% else %}
+          <i class="fas fa-circle-info fa-lg"></i>
+        {% endif %}
+      </div>
+
+      <!-- Body -->
+      <div class="alert-row-body">
+        <div class="d-flex align-items-start justify-content-between gap-2 flex-wrap">
+          <div>
+            <span class="fw-semibold">
+              {{ alert.alert_type.replace('_',' ').title() }}
+            </span>
+            {% if not alert.is_read %}
+            <span class="badge bg-danger ms-2" style="font-size:.65rem;">NEW</span>
+            {% endif %}
+          </div>
+          <span class="text-muted small text-nowrap">
+            {{ alert.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC
+          </span>
+        </div>
+        <p class="mb-1 mt-1 text-muted small">{{ alert.message }}</p>
+        <div class="d-flex gap-3 flex-wrap" style="font-size:.75rem;">
+          <span class="text-muted">
+            <i class="fas fa-{% if alert.email_sent %}check text-success{% else %}xmark text-danger{% endif %} me-1"></i>
+            Email {{ 'sent' if alert.email_sent else 'not sent' }}
+          </span>
+          {% if alert.login_history_id %}
+          <a href="{{ url_for('login_history') }}" class="text-primary text-decoration-none">
+            <i class="fas fa-arrow-right me-1"></i>View in login history
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+    </div>
+    {% endfor %}
+
+  </div>
+</div>
+
+<!-- Pagination -->
+{% if alerts.pages > 1 %}
+<nav class="mt-4 d-flex justify-content-center">
+  <ul class="pagination pagination-sm">
+    <li class="page-item {% if not alerts.has_prev %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for('alerts', page=alerts.prev_num) }}">
+        <i class="fas fa-chevron-left"></i>
+      </a>
+    </li>
+    {% for p in alerts.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+      {% if p %}
+      <li class="page-item {% if p == alerts.page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('alerts', page=p) }}">{{ p }}</a>
+      </li>
+      {% else %}
+      <li class="page-item disabled"><span class="page-link">&hellip;</span></li>
+      {% endif %}
+    {% endfor %}
+    <li class="page-item {% if not alerts.has_next %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for('alerts', page=alerts.next_num) }}">
+        <i class="fas fa-chevron-right"></i>
+      </a>
+    </li>
+  </ul>
+</nav>
+{% endif %}
+
+{% endif %}
+{% endblock %}
