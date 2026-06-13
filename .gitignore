@@ -1,22 +1,45 @@
-# Environment
+﻿# Environment
 .env
-*.env
 
 # Database
-instance/
 *.db
 *.sqlite3
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-.pytest_cache/
+.Python
 *.egg-info/
 dist/
 build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Logs
+*.log
+flask_out.log
+flask_err.log
+
+# OS
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Flask instance folder
+instance/
