@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
@@ -12,18 +13,34 @@ class User(UserMixin, db.Model):
     id             = db.Column(db.Integer, primary_key=True)
     username       = db.Column(db.String(80),  unique=True, nullable=False)
     email          = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash  = db.Column(db.String(256), nullable=False)
-    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+    password_hash  = db.Column(db.String(256))          # nullable for Google-only users
+    google_id      = db.Column(db.String(100), unique=True)
+    profile_pic    = db.Column(db.Text)
+    email_verified = db.Column(db.Boolean, default=False)
     two_fa_enabled = db.Column(db.Boolean, default=False)
+    is_active      = db.Column(db.Boolean, default=True)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login     = db.Column(db.DateTime)
 
-    login_history = db.relationship('LoginHistory', backref='user', lazy='dynamic')
-    alerts        = db.relationship('Alert',        backref='user', lazy='dynamic')
-    otp_codes     = db.relationship('OTPCode',      backref='user', lazy='dynamic')
+    login_history   = db.relationship('LoginHistory',  backref='user', lazy='dynamic',
+                                       cascade='all, delete-orphan')
+    alerts          = db.relationship('Alert',          backref='user', lazy='dynamic',
+                                       cascade='all, delete-orphan')
+    otp_codes       = db.relationship('OTPCode',        backref='user', lazy='dynamic',
+                                       cascade='all, delete-orphan')
+    known_ips       = db.relationship('KnownIP',        backref='user', lazy='dynamic',
+                                       cascade='all, delete-orphan')
+    known_devices   = db.relationship('KnownDevice',    backref='user', lazy='dynamic',
+                                       cascade='all, delete-orphan')
+    failed_attempts = db.relationship('FailedAttempt',  backref='user', lazy='dynamic',
+                                       cascade='all, delete-orphan')
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password: str) -> bool:
+        if not self.password_hash:
+            return False
         return check_password_hash(self.password_hash, password)
 
     def __repr__(self) -> str:
@@ -42,11 +59,11 @@ class LoginHistory(db.Model):
     user_agent         = db.Column(db.String(500))
     location           = db.Column(db.String(200))
     login_time         = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    login_status       = db.Column(db.String(20))    # success | failed | failed_2fa
+    login_status       = db.Column(db.String(20))   # success | failed | failed_2fa | pending_2fa
     is_suspicious      = db.Column(db.Boolean, default=False)
     suspicious_reasons = db.Column(db.Text)
     two_fa_required    = db.Column(db.Boolean, default=False)
-    two_fa_verified    = db.Column(db.Boolean, nullable=True)  # None = not required
+    two_fa_verified    = db.Column(db.Boolean, nullable=True)
 
     def __repr__(self) -> str:
         return f'<LoginHistory user={self.user_id} status={self.login_status}>'
@@ -73,10 +90,10 @@ class OTPCode(db.Model):
 
     id               = db.Column(db.Integer, primary_key=True)
     user_id          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    code_hash        = db.Column(db.String(256), nullable=False)
-    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
-    expires_at       = db.Column(db.DateTime, nullable=False)
+    code             = db.Column(db.String(6), nullable=False)   # plain 6-digit code
     is_used          = db.Column(db.Boolean, default=False)
+    expires_at       = db.Column(db.DateTime, nullable=False)
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
     ip_address       = db.Column(db.String(45))
     login_history_id = db.Column(db.Integer, db.ForeignKey('login_history.id'), nullable=True)
 
@@ -86,3 +103,57 @@ class OTPCode(db.Model):
 
     def __repr__(self) -> str:
         return f'<OTPCode user={self.user_id} used={self.is_used}>'
+
+
+class KnownIP(db.Model):
+    __tablename__ = 'known_ips'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    user_id     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    ip_address  = db.Column(db.String(45), nullable=False)
+    first_seen  = db.Column(db.DateTime, default=datetime.utcnow)
+    last_seen   = db.Column(db.DateTime, default=datetime.utcnow)
+    login_count = db.Column(db.Integer, default=1)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'ip_address', name='uq_user_ip'),
+    )
+
+    def __repr__(self) -> str:
+        return f'<KnownIP user={self.user_id} ip={self.ip_address}>'
+
+
+class KnownDevice(db.Model):
+    __tablename__ = 'known_devices'
+
+    id                 = db.Column(db.Integer, primary_key=True)
+    user_id            = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    device_fingerprint = db.Column(db.String(64), nullable=False)
+    device_type        = db.Column(db.String(20))
+    browser            = db.Column(db.String(120))
+    os                 = db.Column(db.String(120))
+    first_seen         = db.Column(db.DateTime, default=datetime.utcnow)
+    last_seen          = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'device_fingerprint', name='uq_user_device'),
+    )
+
+    def __repr__(self) -> str:
+        return f'<KnownDevice user={self.user_id} fp={self.device_fingerprint[:8]}>'
+
+
+class FailedAttempt(db.Model):
+    __tablename__ = 'failed_attempts'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    user_id      = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    ip_address   = db.Column(db.String(45), nullable=False)
+    attempt_time = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self) -> str:
+        return f'<FailedAttempt user={self.user_id} ip={self.ip_address}>'
+
+
+def device_fingerprint(ua_string: str) -> str:
+    return hashlib.md5(ua_string.encode()).hexdigest()[:32]

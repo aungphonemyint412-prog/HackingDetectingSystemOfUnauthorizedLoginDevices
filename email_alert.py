@@ -194,13 +194,86 @@ review your login history in the security dashboard.
 
 
 def send_otp_email(recipient: str, username: str, otp_code: str,
-                   expires_minutes: int = 5) -> bool:
-    """Send a 6-digit OTP verification code to the user via Gmail."""
+                   expires_minutes: int = 5,
+                   ip_address: str = '',
+                   location: str = '',
+                   ua_info=None,
+                   purpose: str = 'login') -> bool:
+    """Send a 6-digit OTP code (login 2FA or password reset) via Gmail.
+
+    Pass ip_address + location + ua_info to include a login-details table
+    in the email body (shown for 2FA logins so the user can verify the location).
+    purpose='reset' switches the subject, header, and warning text for password resets.
+    """
     sender  = os.environ.get('MAIL_USERNAME', '')
     app_pwd = os.environ.get('MAIL_PASSWORD', '')
 
     if not sender or not app_pwd:
         return False
+
+    is_reset     = purpose == 'reset'
+    header_title = 'Password Reset Code'       if is_reset else 'Login Verification'
+    header_sub   = 'Reset your HDS password'   if is_reset else 'Two-Factor Authentication Code'
+    subject_line = f'[HDS] Your password reset code: {otp_code}' if is_reset \
+                   else f'[HDS] Your login verification code: {otp_code}'
+    action_label = 'password reset'            if is_reset else 'login'
+
+    # ── Optional location/device details table ─────────────────────────────
+    location_section_html = ''
+    location_block_plain  = ''
+
+    if ip_address:
+        rows = [('IP ADDRESS', ip_address), ('LOCATION', location or 'Unknown')]
+        if ua_info:
+            rows += [
+                ('DEVICE',  ua_info.get('device_type', 'Unknown')),
+                ('BROWSER', ua_info.get('browser',      'Unknown')),
+                ('OS',      ua_info.get('os',           'Unknown')),
+            ]
+
+        rows_html = ''
+        for i, (label, value) in enumerate(rows):
+            bg = 'background:#f1f5f9;' if i % 2 == 0 else ''
+            rows_html += (
+                f'<tr style="{bg}">'
+                f'<td style="border:1px solid #e2e8f0;color:#64748b;width:40%;'
+                f'font-size:13px;font-weight:600;padding:10px;">{label}</td>'
+                f'<td style="border:1px solid #e2e8f0;color:#1e293b;'
+                f'font-size:13px;padding:10px;">{value}</td>'
+                f'</tr>'
+            )
+
+        location_section_html = (
+            '<p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600;">'
+            'Login attempt details:</p>'
+            '<table width="100%" cellpadding="0" cellspacing="0"'
+            ' style="border-collapse:collapse;margin-bottom:24px;">'
+            f'{rows_html}</table>'
+        )
+
+        location_block_plain = (
+            f'\nLogin attempt details:\n'
+            f'  IP Address : {ip_address}\n'
+            f'  Location   : {location or "Unknown"}\n'
+        )
+        if ua_info:
+            location_block_plain += (
+                f'  Device     : {ua_info.get("device_type", "Unknown")}\n'
+                f'  Browser    : {ua_info.get("browser", "Unknown")}\n'
+                f'  OS         : {ua_info.get("os", "Unknown")}\n'
+            )
+
+    # ── Warning text ───────────────────────────────────────────────────────
+    if is_reset:
+        warning_html  = ('<strong>&#9888; Never share this code.</strong> '
+                         'If you did not request a password reset, ignore this email '
+                         'and your password will remain unchanged.')
+        warning_plain = 'If you did not request a password reset, ignore this email.'
+    else:
+        warning_html  = ('<strong>&#9888; Never share this code.</strong> '
+                         'HDS will never ask for this code via phone or email. '
+                         'If you did not attempt to log in, change your password immediately.')
+        warning_plain = 'If you did not attempt to log in, change your password immediately.'
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -216,10 +289,10 @@ def send_otp_email(recipient: str, username: str, otp_code: str,
           <tr>
             <td style="background:#2563eb;padding:28px 32px;text-align:center;">
               <h1 style="margin:0;color:#fff;font-size:22px;">
-                &#128274; Login Verification
+                &#128274; {header_title}
               </h1>
               <p style="margin:6px 0 0;color:#bfdbfe;font-size:14px;">
-                Two-Factor Authentication Code
+                {header_sub}
               </p>
             </td>
           </tr>
@@ -230,7 +303,7 @@ def send_otp_email(recipient: str, username: str, otp_code: str,
                 Dear <strong>{username}</strong>,
               </p>
               <p style="color:#475569;margin:0 0 28px;">
-                Use the verification code below to complete your login.
+                Use the verification code below to complete your {action_label}.
                 This code expires in <strong>{expires_minutes} minutes</strong>.
               </p>
 
@@ -247,12 +320,12 @@ def send_otp_email(recipient: str, username: str, otp_code: str,
                 </div>
               </div>
 
+              {location_section_html}
+
               <div style="background:#fff5f5;border:1px solid #fecaca;
                           border-radius:6px;padding:14px;margin-bottom:20px;">
                 <p style="margin:0;color:#dc2626;font-size:13px;">
-                  <strong>&#9888; Never share this code.</strong>
-                  HDS will never ask for this code via phone or email.
-                  If you did not attempt to log in, change your password immediately.
+                  {warning_html}
                 </p>
               </div>
 
@@ -283,24 +356,24 @@ def send_otp_email(recipient: str, username: str, otp_code: str,
 </body>
 </html>"""
 
-    plain = f"""Login Verification Code – HDS
+    plain = f"""{'Password Reset Code' if is_reset else 'Login Verification Code'} – HDS
 
 Dear {username},
 
-Your one-time login verification code is:
+Your one-time {action_label} code is:
 
     {otp_code}
-
+{location_block_plain}
 This code expires in {expires_minutes} minutes and can only be used once.
 
-If you did not attempt to log in, change your password immediately.
+{warning_plain}
 
 -- Hacking Detection System (automated message)
 """
 
     try:
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = f'[HDS] Your login verification code: {otp_code}'
+        msg['Subject'] = subject_line
         msg['From']    = f'HDS Security <{sender}>'
         msg['To']      = recipient
 

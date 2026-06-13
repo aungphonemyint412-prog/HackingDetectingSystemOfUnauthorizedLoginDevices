@@ -1,0 +1,182 @@
+{% extends 'base.html' %}
+{% block title %}Confirm Account – HDS{% endblock %}
+
+{% block content %}
+<div class="auth-page">
+  <div class="auth-card" style="max-width:440px;">
+
+    <div class="auth-brand">
+      <i class="fas fa-shield-halved text-primary"></i>
+      <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
+    </div>
+
+    {% if google_users %}
+
+      <h2 class="auth-title">Confirm your account</h2>
+      <p class="auth-subtitle">
+        Select the account you want to sign in with.
+        Google will verify you own it.
+      </p>
+
+      <form method="POST" action="{{ url_for('google_login_as') }}" id="confirmForm">
+        {% for u in google_users %}
+        <div class="account-card mb-3 p-3 border rounded-3"
+             id="card_{{ loop.index }}"
+             onclick="selectAccount({{ loop.index }}, '{{ u.email }}')"
+             style="cursor:pointer; transition:.15s;">
+
+          <div class="d-flex align-items-center gap-3">
+            <!-- Avatar -->
+            {% if u.profile_pic %}
+            <img src="{{ u.profile_pic }}" alt="{{ u.username }}"
+                 class="rounded-circle flex-shrink-0"
+                 width="52" height="52" referrerpolicy="no-referrer">
+            {% else %}
+            <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center
+                        text-white fw-bold flex-shrink-0"
+                 style="width:52px;height:52px;font-size:1.3rem;">
+              {{ u.username[0].upper() }}
+            </div>
+            {% endif %}
+
+            <!-- Info -->
+            <div class="flex-grow-1">
+              <div class="fw-semibold" style="font-size:.97rem;">{{ u.username }}</div>
+              <div class="text-muted" style="font-size:.83rem;">{{ u.email }}</div>
+              {% if u.last_login %}
+              <div class="text-muted" style="font-size:.75rem;">
+                Last login: {{ u.last_login.strftime('%d %b %Y, %H:%M') }} UTC
+              </div>
+              {% endif %}
+            </div>
+
+            <!-- Checkbox -->
+            <div class="flex-shrink-0">
+              <div class="confirm-check rounded-circle border d-flex align-items-center
+                          justify-content-center" id="check_{{ loop.index }}"
+                   style="width:26px;height:26px;border-color:#dee2e6!important;
+                          transition:.15s;">
+                <i class="fas fa-check text-white" style="font-size:.75rem;display:none;"
+                   id="checkicon_{{ loop.index }}"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- Confirmation checkbox (hidden, but used for UX state) -->
+          <div class="mt-3 confirm-row" id="confirm_row_{{ loop.index }}" style="display:none;">
+            <label class="d-flex align-items-center gap-2 text-muted small">
+              <input type="checkbox" class="form-check-input confirm-box"
+                     id="confirmbox_{{ loop.index }}"
+                     onchange="toggleConfirm({{ loop.index }})">
+              I confirm this is my Google account
+            </label>
+          </div>
+
+        </div>
+        {% endfor %}
+
+        <input type="hidden" name="email" id="selectedEmail" value="{{ google_users[0].email }}">
+
+        <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold mb-2"
+                id="continueBtn">
+          <i class="fas fa-right-to-bracket me-2"></i>Continue with Google
+        </button>
+      </form>
+
+      <hr class="my-3">
+      <a href="{{ url_for('google.login') }}" class="btn btn-outline-secondary w-100 btn-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48"
+             class="me-2" style="vertical-align:-2px">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.34-8.16 2.34-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        Use a different Google account
+      </a>
+
+    {% else %}
+      <!-- No registered Google accounts yet — go straight to Google -->
+      <h2 class="auth-title">Sign in with Google</h2>
+      <p class="auth-subtitle">No Google accounts registered yet.</p>
+      <a href="{{ url_for('google.login') }}" class="btn btn-outline-danger w-100 py-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48"
+             class="me-2" style="vertical-align:-3px">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.34-8.16 2.34-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        Sign in with Google
+      </a>
+    {% endif %}
+
+    <p class="text-center mt-4 text-muted small">
+      <a href="{{ url_for('login') }}" class="auth-link">
+        <i class="fas fa-arrow-left me-1"></i>Back to login
+      </a>
+    </p>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const totalUsers = {{ google_users | length }};
+let selectedIndex = 1;
+
+function selectAccount(idx, email) {
+  // Deselect all
+  for (let i = 1; i <= totalUsers; i++) {
+    document.getElementById('card_' + i).style.borderColor = '#dee2e6';
+    document.getElementById('card_' + i).style.background  = '';
+    document.getElementById('check_' + i).style.background  = '#fff';
+    document.getElementById('check_' + i).style.borderColor = '#dee2e6';
+    document.getElementById('checkicon_' + i).style.display = 'none';
+    document.getElementById('confirm_row_' + i).style.display = 'none';
+  }
+
+  // Select clicked
+  selectedIndex = idx;
+  document.getElementById('card_' + idx).style.borderColor = '#2563eb';
+  document.getElementById('card_' + idx).style.background  = 'rgba(37,99,235,.05)';
+  document.getElementById('check_' + idx).style.background  = '#2563eb';
+  document.getElementById('check_' + idx).style.borderColor = '#2563eb';
+  document.getElementById('checkicon_' + idx).style.display = '';
+  document.getElementById('selectedEmail').value = email;
+
+  // Show confirm checkbox if multiple accounts
+  if (totalUsers > 1) {
+    document.getElementById('confirm_row_' + idx).style.display = '';
+    const cb = document.getElementById('confirmbox_' + idx);
+    if (cb) cb.checked = false;
+    document.getElementById('continueBtn').disabled = true;
+  }
+}
+
+function toggleConfirm(idx) {
+  const cb = document.getElementById('confirmbox_' + idx);
+  document.getElementById('continueBtn').disabled = !cb.checked;
+}
+
+// Select first account on load
+window.addEventListener('DOMContentLoaded', () => {
+  if (totalUsers > 0) {
+    const firstEmail = document.getElementById('selectedEmail').value;
+    selectAccount(1, firstEmail);
+    // If only one account, enable button immediately
+    if (totalUsers === 1) {
+      document.getElementById('continueBtn').disabled = false;
+    }
+  }
+});
+</script>
+
+<style>
+.account-card:hover {
+  border-color: #93c5fd !important;
+  background: rgba(37,99,235,.03);
+}
+</style>
+{% endblock %}
