@@ -9,7 +9,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import pytest
 from datetime import datetime, timedelta
 
-from werkzeug.security import generate_password_hash
 
 from app import app as flask_app, generate_otp, mask_email
 from models import db, User, LoginHistory, Alert, OTPCode
@@ -354,10 +353,8 @@ class TestTwoFactorAuth:
         otp_record = OTPCode.query.filter_by(user_id=user.id, is_used=False).first()
         assert otp_record is not None
 
-        # Build the correct code: we need the raw code. Re-create using known hash is
-        # impossible, so we patch the hash to a known code instead.
         known_code = '123456'
-        otp_record.code_hash = generate_password_hash(known_code)
+        otp_record.code = known_code
         db.session.commit()
 
         r = client.post('/verify-2fa', data={'otp_code': known_code},
@@ -386,7 +383,7 @@ class TestTwoFactorAuth:
         otp_record = OTPCode.query.filter_by(user_id=user.id, is_used=False).first()
 
         known_code = '654321'
-        otp_record.code_hash = generate_password_hash(known_code)
+        otp_record.code = known_code
         db.session.commit()
 
         client.post('/verify-2fa', data={'otp_code': known_code}, follow_redirects=True)
