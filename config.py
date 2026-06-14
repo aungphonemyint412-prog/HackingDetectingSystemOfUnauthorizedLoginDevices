@@ -32,6 +32,8 @@ class Config:
     FAILED_ATTEMPT_WINDOW = 30
     RAPID_LOGIN_COUNT     = 3
     RAPID_LOGIN_WINDOW    = 10
-    UNUSUAL_HOUR_START    = 0
-    UNUSUAL_HOUR_END      = 5
-    HISTORY_LOOKUP        = 50
+    UNUSUAL_HOUR_START         = 0
+    UNUSUAL_HOUR_END           = 5
+    HISTORY_LOOKUP             = 50
+    LOCKOUT_DURATION           = 30   # minutes to lock after brute force
+    IMPOSSIBLE_TRAVEL_SPEED    = 900  # km/h threshold for R7

@@ -1,36 +1,66 @@
 """
 Gmail SMTP alert system.
-Sends HTML + plain-text emails when suspicious activity is detected.
+Sends HTML + plain-text emails for security events.
 """
 import smtplib
+import time
 import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 
 
-def send_alert_email(
-    recipient: str,
-    username: str,
-    ip_address: str,
-    ua_info: dict,
-    reasons: list[str],
-    login_time: datetime,
-) -> bool:
-    """
-    Send a suspicious-login alert to *recipient*.
-    Returns True on success, False on failure.
-    """
-    sender  = os.environ.get('MAIL_USERNAME', '')
-    app_pwd = os.environ.get('MAIL_PASSWORD', '')
+# ── Shared helpers ─────────────────────────────────────────────────────────
 
+def _credentials() -> tuple[str, str]:
+    return os.environ.get('MAIL_USERNAME', ''), os.environ.get('MAIL_PASSWORD', '')
+
+
+def _smtp_send(msg: MIMEMultipart, retries: int = 3) -> bool:
+    sender, app_pwd = _credentials()
     if not sender or not app_pwd:
         return False
+    for attempt in range(retries):
+        try:
+            with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(sender, app_pwd)
+                srv.sendmail(sender, msg['To'], msg.as_string())
+            return True
+        except Exception as exc:
+            print(f'[email_alert] Attempt {attempt + 1}/{retries} failed: {exc}')
+            if attempt < retries - 1:
+                time.sleep(1)
+    return False
 
-    reasons_html  = ''.join(f'<li>{r}</li>' for r in reasons)
-    reasons_plain = '\n'.join(f'  • {r}' for r in reasons)
 
-    html = f"""<!DOCTYPE html>
+def _base_msg(subject: str, recipient: str) -> MIMEMultipart:
+    sender, _ = _credentials()
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = subject
+    msg['From']    = f'HDS Security <{sender}>'
+    msg['To']      = recipient
+    return msg
+
+
+def _detail_rows_html(rows: list[tuple[str, str]]) -> str:
+    html = ''
+    for i, (label, value) in enumerate(rows):
+        bg = 'background:#f1f5f9;' if i % 2 == 0 else ''
+        html += (
+            f'<tr style="{bg}">'
+            f'<td style="border:1px solid #e2e8f0;color:#64748b;width:40%;'
+            f'font-size:13px;font-weight:600;padding:10px;">{label}</td>'
+            f'<td style="border:1px solid #e2e8f0;color:#1e293b;'
+            f'font-size:13px;padding:10px;">{value}</td>'
+            f'</tr>'
+        )
+    return html
+
+
+def _wrap_html(header_color: str, header_title: str, header_sub: str, body: str) -> str:
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;font-family:Arial,sans-serif;background:#f4f6fb;">
@@ -40,106 +70,19 @@ def send_alert_email(
         <table width="600" cellpadding="0" cellspacing="0"
                style="background:#fff;border-radius:8px;
                       box-shadow:0 2px 8px rgba(0,0,0,.12);overflow:hidden;">
-          <!-- Header -->
           <tr>
-            <td style="background:#dc3545;padding:28px 32px;text-align:center;">
-              <h1 style="margin:0;color:#fff;font-size:22px;">
-                &#9888;&#65039; Security Alert
-              </h1>
-              <p style="margin:6px 0 0;color:#ffcdd2;font-size:14px;">
-                Suspicious Login Detected
-              </p>
+            <td style="background:{header_color};padding:28px 32px;text-align:center;">
+              <h1 style="margin:0;color:#fff;font-size:22px;">{header_title}</h1>
+              <p style="margin:6px 0 0;color:rgba(255,255,255,.8);font-size:14px;">{header_sub}</p>
             </td>
           </tr>
-          <!-- Body -->
-          <tr>
-            <td style="padding:32px;">
-              <p style="margin:0 0 16px;color:#1e293b;">
-                Dear <strong>{username}</strong>,
-              </p>
-              <p style="color:#475569;margin:0 0 24px;">
-                We detected unusual login activity on your account.
-                Please review the details below.
-              </p>
-
-              <!-- Login Details -->
-              <table width="100%" cellpadding="10" cellspacing="0"
-                     style="border-collapse:collapse;margin-bottom:24px;">
-                <tr style="background:#f1f5f9;">
-                  <td style="border:1px solid #e2e8f0;color:#64748b;width:40%;font-size:13px;font-weight:600;">
-                    DATE &amp; TIME
-                  </td>
-                  <td style="border:1px solid #e2e8f0;color:#1e293b;font-size:13px;">
-                    {login_time.strftime('%Y-%m-%d %H:%M:%S UTC')}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="border:1px solid #e2e8f0;color:#64748b;font-size:13px;font-weight:600;">
-                    IP ADDRESS
-                  </td>
-                  <td style="border:1px solid #e2e8f0;color:#1e293b;font-size:13px;">
-                    {ip_address}
-                  </td>
-                </tr>
-                <tr style="background:#f1f5f9;">
-                  <td style="border:1px solid #e2e8f0;color:#64748b;font-size:13px;font-weight:600;">
-                    DEVICE
-                  </td>
-                  <td style="border:1px solid #e2e8f0;color:#1e293b;font-size:13px;">
-                    {ua_info.get('device_type','Unknown')}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="border:1px solid #e2e8f0;color:#64748b;font-size:13px;font-weight:600;">
-                    BROWSER
-                  </td>
-                  <td style="border:1px solid #e2e8f0;color:#1e293b;font-size:13px;">
-                    {ua_info.get('browser','Unknown')}
-                  </td>
-                </tr>
-                <tr style="background:#f1f5f9;">
-                  <td style="border:1px solid #e2e8f0;color:#64748b;font-size:13px;font-weight:600;">
-                    OPERATING SYSTEM
-                  </td>
-                  <td style="border:1px solid #e2e8f0;color:#1e293b;font-size:13px;">
-                    {ua_info.get('os','Unknown')}
-                  </td>
-                </tr>
-              </table>
-
-              <!-- Reasons -->
-              <div style="background:#fff5f5;border:1px solid #fecaca;
-                          border-radius:6px;padding:16px;margin-bottom:24px;">
-                <p style="margin:0 0 10px;color:#dc2626;font-weight:700;font-size:14px;">
-                  Suspicious Activity Detected:
-                </p>
-                <ul style="margin:0;padding-left:20px;color:#7f1d1d;font-size:13px;">
-                  {reasons_html}
-                </ul>
-              </div>
-
-              <!-- Action -->
-              <div style="background:#f0fdf4;border:1px solid #bbf7d0;
-                          border-radius:6px;padding:16px;">
-                <p style="margin:0 0 8px;color:#15803d;font-weight:700;font-size:14px;">
-                  Recommended Action:
-                </p>
-                <ul style="margin:0;padding-left:20px;color:#166534;font-size:13px;">
-                  <li>If this was <strong>you</strong>, no action is needed.</li>
-                  <li>If this was <strong>NOT you</strong>, change your password immediately.</li>
-                  <li>Review your full login history in the security dashboard.</li>
-                </ul>
-              </div>
-            </td>
-          </tr>
-          <!-- Footer -->
+          <tr><td style="padding:32px;">{body}</td></tr>
           <tr>
             <td style="background:#f8fafc;border-top:1px solid #e2e8f0;
                        padding:16px 32px;text-align:center;">
               <p style="margin:0;color:#94a3b8;font-size:12px;">
-                This is an automated message from the
-                <strong>Hacking Detection System (HDS)</strong>.<br>
-                Do not reply to this email.
+                Automated message from <strong>Hacking Detection System (HDS)</strong>.
+                Do not reply.
               </p>
             </td>
           </tr>
@@ -150,14 +93,123 @@ def send_alert_email(
 </body>
 </html>"""
 
+
+# ── Alert email ────────────────────────────────────────────────────────────
+
+def send_alert_email(
+    recipient: str,
+    username: str,
+    ip_address: str,
+    ua_info: dict,
+    reasons: list[str],
+    login_time: datetime,
+    location: str = '',
+    risk_score: int = 0,
+    recommendations: list | None = None,
+    confirm_url: str = '',
+    deny_url: str = '',
+) -> bool:
+    if recommendations is None:
+        recommendations = ['If this was NOT you, change your password immediately.']
+
+    reasons_html = ''.join(f'<li>{r}</li>' for r in reasons)
+    recs_html    = ''.join(f'<li>{r}</li>' for r in recommendations)
+    reasons_plain = '\n'.join(f'  • {r}' for r in reasons)
+
+    # Risk badge colour
+    if risk_score >= 76:
+        badge_color = '#dc2626'
+    elif risk_score >= 51:
+        badge_color = '#ea580c'
+    elif risk_score >= 26:
+        badge_color = '#ca8a04'
+    else:
+        badge_color = '#16a34a'
+
+    detail_rows = [
+        ('DATE & TIME',     login_time.strftime('%Y-%m-%d %H:%M:%S UTC')),
+        ('IP ADDRESS',      ip_address),
+        ('LOCATION',        location or 'Unknown'),
+        ('DEVICE',          ua_info.get('device_type', 'Unknown')),
+        ('BROWSER',         ua_info.get('browser',     'Unknown')),
+        ('OPERATING SYSTEM', ua_info.get('os',         'Unknown')),
+    ]
+
+    was_this_you = ''
+    if confirm_url and deny_url:
+        was_this_you = f"""
+        <div style="background:#f0f9ff;border:1px solid #bae6fd;
+                    border-radius:8px;padding:20px;margin:20px 0;text-align:center;">
+          <p style="margin:0 0 14px;color:#0369a1;font-weight:700;font-size:15px;">
+            Was this you?
+          </p>
+          <p style="margin:0 0 16px;color:#0c4a6e;font-size:13px;">
+            Confirm or deny this login to keep your account secure.
+          </p>
+          <a href="{confirm_url}"
+             style="display:inline-block;background:#16a34a;color:#fff;
+                    text-decoration:none;padding:10px 24px;border-radius:6px;
+                    font-weight:700;font-size:14px;margin:0 6px;">
+            &#10003; Yes, this was me
+          </a>
+          <a href="{deny_url}"
+             style="display:inline-block;background:#dc2626;color:#fff;
+                    text-decoration:none;padding:10px 24px;border-radius:6px;
+                    font-weight:700;font-size:14px;margin:0 6px;">
+            &#10007; No, secure my account
+          </a>
+        </div>"""
+
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 16px;">
+        Suspicious login activity was detected on your account.
+      </p>
+
+      <div style="display:flex;align-items:center;margin:0 0 20px;">
+        <span style="background:{badge_color};color:#fff;border-radius:20px;
+                     padding:4px 14px;font-size:13px;font-weight:700;">
+          Risk Score: {risk_score}/100
+        </span>
+      </div>
+
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html(detail_rows)}
+      </table>
+
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:16px;margin-bottom:16px;">
+        <p style="margin:0 0 10px;color:#dc2626;font-weight:700;font-size:14px;">
+          Suspicious activity detected:
+        </p>
+        <ul style="margin:0;padding-left:20px;color:#7f1d1d;font-size:13px;">
+          {reasons_html}
+        </ul>
+      </div>
+
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;
+                  border-radius:6px;padding:16px;margin-bottom:16px;">
+        <p style="margin:0 0 8px;color:#15803d;font-weight:700;font-size:14px;">
+          Security recommendations:
+        </p>
+        <ul style="margin:0;padding-left:20px;color:#166534;font-size:13px;">
+          {recs_html}
+        </ul>
+      </div>
+
+      {was_this_you}
+    """
+
     plain = f"""Security Alert – Suspicious Login Detected
 
 Dear {username},
 
-A suspicious login was detected on your account:
+Risk Score: {risk_score}/100
 
   Date/Time : {login_time.strftime('%Y-%m-%d %H:%M:%S UTC')}
   IP Address: {ip_address}
+  Location  : {location or 'Unknown'}
   Device    : {ua_info.get('device_type', 'Unknown')}
   Browser   : {ua_info.get('browser', 'Unknown')}
   OS        : {ua_info.get('os', 'Unknown')}
@@ -165,33 +217,20 @@ A suspicious login was detected on your account:
 Suspicious Reasons:
 {reasons_plain}
 
-If this was NOT you, please change your password immediately and
-review your login history in the security dashboard.
+{'Confirm login: ' + confirm_url if confirm_url else ''}
+{'Deny & secure account: ' + deny_url if deny_url else ''}
 
 -- Hacking Detection System (automated alert)
 """
 
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = '⚠️ Security Alert: Suspicious Login Detected'
-        msg['From']    = f'HDS Security <{sender}>'
-        msg['To']      = recipient
+    html = _wrap_html('#dc3545', '&#9888;&#65039; Security Alert', 'Suspicious Login Detected', body)
+    msg  = _base_msg('[HDS] Security Alert: Suspicious Login Detected', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
 
-        msg.attach(MIMEText(plain, 'plain'))
-        msg.attach(MIMEText(html,  'html'))
 
-        with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as srv:
-            srv.ehlo()
-            srv.starttls()
-            srv.login(sender, app_pwd)
-            srv.sendmail(sender, recipient, msg.as_string())
-
-        return True
-
-    except Exception as exc:
-        print(f'[email_alert] Failed to send: {exc}')
-        return False
-
+# ── OTP email ──────────────────────────────────────────────────────────────
 
 def send_otp_email(recipient: str, username: str, otp_code: str,
                    expires_minutes: int = 5,
@@ -199,26 +238,14 @@ def send_otp_email(recipient: str, username: str, otp_code: str,
                    location: str = '',
                    ua_info=None,
                    purpose: str = 'login') -> bool:
-    """Send a 6-digit OTP code (login 2FA or password reset) via Gmail.
-
-    Pass ip_address + location + ua_info to include a login-details table
-    in the email body (shown for 2FA logins so the user can verify the location).
-    purpose='reset' switches the subject, header, and warning text for password resets.
-    """
-    sender  = os.environ.get('MAIL_USERNAME', '')
-    app_pwd = os.environ.get('MAIL_PASSWORD', '')
-
-    if not sender or not app_pwd:
-        return False
-
+    """Send a 6-digit OTP code (login 2FA or password reset) via Gmail."""
     is_reset     = purpose == 'reset'
     header_title = 'Password Reset Code'       if is_reset else 'Login Verification'
     header_sub   = 'Reset your HDS password'   if is_reset else 'Two-Factor Authentication Code'
     subject_line = f'[HDS] Your password reset code: {otp_code}' if is_reset \
                    else f'[HDS] Your login verification code: {otp_code}'
-    action_label = 'password reset'            if is_reset else 'login'
+    action_label = 'password reset' if is_reset else 'login'
 
-    # ── Optional location/device details table ─────────────────────────────
     location_section_html = ''
     location_block_plain  = ''
 
@@ -230,27 +257,13 @@ def send_otp_email(recipient: str, username: str, otp_code: str,
                 ('BROWSER', ua_info.get('browser',      'Unknown')),
                 ('OS',      ua_info.get('os',           'Unknown')),
             ]
-
-        rows_html = ''
-        for i, (label, value) in enumerate(rows):
-            bg = 'background:#f1f5f9;' if i % 2 == 0 else ''
-            rows_html += (
-                f'<tr style="{bg}">'
-                f'<td style="border:1px solid #e2e8f0;color:#64748b;width:40%;'
-                f'font-size:13px;font-weight:600;padding:10px;">{label}</td>'
-                f'<td style="border:1px solid #e2e8f0;color:#1e293b;'
-                f'font-size:13px;padding:10px;">{value}</td>'
-                f'</tr>'
-            )
-
         location_section_html = (
             '<p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600;">'
             'Login attempt details:</p>'
             '<table width="100%" cellpadding="0" cellspacing="0"'
             ' style="border-collapse:collapse;margin-bottom:24px;">'
-            f'{rows_html}</table>'
+            f'{_detail_rows_html(rows)}</table>'
         )
-
         location_block_plain = (
             f'\nLogin attempt details:\n'
             f'  IP Address : {ip_address}\n'
@@ -263,98 +276,42 @@ def send_otp_email(recipient: str, username: str, otp_code: str,
                 f'  OS         : {ua_info.get("os", "Unknown")}\n'
             )
 
-    # ── Warning text ───────────────────────────────────────────────────────
     if is_reset:
         warning_html  = ('<strong>&#9888; Never share this code.</strong> '
-                         'If you did not request a password reset, ignore this email '
-                         'and your password will remain unchanged.')
+                         'If you did not request a password reset, ignore this email.')
         warning_plain = 'If you did not request a password reset, ignore this email.'
     else:
         warning_html  = ('<strong>&#9888; Never share this code.</strong> '
-                         'HDS will never ask for this code via phone or email. '
                          'If you did not attempt to log in, change your password immediately.')
         warning_plain = 'If you did not attempt to log in, change your password immediately.'
 
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;font-family:Arial,sans-serif;background:#f4f6fb;">
-  <table width="100%" cellpadding="0" cellspacing="0">
-    <tr>
-      <td align="center" style="padding:40px 20px;">
-        <table width="520" cellpadding="0" cellspacing="0"
-               style="background:#fff;border-radius:8px;
-                      box-shadow:0 2px 8px rgba(0,0,0,.12);overflow:hidden;">
-          <!-- Header -->
-          <tr>
-            <td style="background:#2563eb;padding:28px 32px;text-align:center;">
-              <h1 style="margin:0;color:#fff;font-size:22px;">
-                &#128274; {header_title}
-              </h1>
-              <p style="margin:6px 0 0;color:#bfdbfe;font-size:14px;">
-                {header_sub}
-              </p>
-            </td>
-          </tr>
-          <!-- Body -->
-          <tr>
-            <td style="padding:32px;">
-              <p style="margin:0 0 16px;color:#1e293b;">
-                Dear <strong>{username}</strong>,
-              </p>
-              <p style="color:#475569;margin:0 0 28px;">
-                Use the verification code below to complete your {action_label}.
-                This code expires in <strong>{expires_minutes} minutes</strong>.
-              </p>
-
-              <!-- OTP box -->
-              <div style="text-align:center;margin:0 0 28px;">
-                <div style="display:inline-block;background:#f1f5f9;
-                            border:2px dashed #2563eb;border-radius:12px;
-                            padding:20px 40px;">
-                  <span style="font-size:2.4rem;font-weight:900;
-                               letter-spacing:12px;color:#1e293b;
-                               font-family:'Courier New',monospace;">
-                    {otp_code}
-                  </span>
-                </div>
-              </div>
-
-              {location_section_html}
-
-              <div style="background:#fff5f5;border:1px solid #fecaca;
-                          border-radius:6px;padding:14px;margin-bottom:20px;">
-                <p style="margin:0;color:#dc2626;font-size:13px;">
-                  {warning_html}
-                </p>
-              </div>
-
-              <div style="background:#f0fdf4;border:1px solid #bbf7d0;
-                          border-radius:6px;padding:14px;">
-                <p style="margin:0;color:#15803d;font-size:13px;">
-                  This code is valid for <strong>{expires_minutes} minutes</strong>
-                  and can only be used once.
-                </p>
-              </div>
-            </td>
-          </tr>
-          <!-- Footer -->
-          <tr>
-            <td style="background:#f8fafc;border-top:1px solid #e2e8f0;
-                       padding:14px 32px;text-align:center;">
-              <p style="margin:0;color:#94a3b8;font-size:12px;">
-                Automated message from
-                <strong>Hacking Detection System (HDS)</strong>.
-                Do not reply.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>"""
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 28px;">
+        Use the verification code below to complete your {action_label}.
+        This code expires in <strong>{expires_minutes} minutes</strong>.
+      </p>
+      <div style="text-align:center;margin:0 0 28px;">
+        <div style="display:inline-block;background:#f1f5f9;
+                    border:2px dashed #2563eb;border-radius:12px;padding:20px 40px;">
+          <span style="font-size:2.4rem;font-weight:900;letter-spacing:12px;
+                       color:#1e293b;font-family:'Courier New',monospace;">
+            {otp_code}
+          </span>
+        </div>
+      </div>
+      {location_section_html}
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:14px;margin-bottom:20px;">
+        <p style="margin:0;color:#dc2626;font-size:13px;">{warning_html}</p>
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0;color:#15803d;font-size:13px;">
+          This code is valid for <strong>{expires_minutes} minutes</strong> and can only be used once.
+        </p>
+      </div>
+    """
 
     plain = f"""{'Password Reset Code' if is_reset else 'Login Verification Code'} – HDS
 
@@ -371,23 +328,286 @@ This code expires in {expires_minutes} minutes and can only be used once.
 -- Hacking Detection System (automated message)
 """
 
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject_line
-        msg['From']    = f'HDS Security <{sender}>'
-        msg['To']      = recipient
+    html = _wrap_html('#2563eb', f'&#128274; {header_title}', header_sub, body)
+    msg  = _base_msg(subject_line, recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
 
-        msg.attach(MIMEText(plain, 'plain'))
-        msg.attach(MIMEText(html,  'html'))
 
-        with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as srv:
-            srv.ehlo()
-            srv.starttls()
-            srv.login(sender, app_pwd)
-            srv.sendmail(sender, recipient, msg.as_string())
+# ── Login notification email ───────────────────────────────────────────────
 
-        return True
+def send_login_notification_email(
+    recipient: str,
+    username: str,
+    ip: str,
+    location: str,
+    ua_info: dict,
+    login_time: datetime,
+) -> bool:
+    """Quiet notification sent on every successful non-suspicious login."""
+    detail_rows = [
+        ('DATE & TIME',     login_time.strftime('%Y-%m-%d %H:%M:%S UTC')),
+        ('IP ADDRESS',      ip),
+        ('LOCATION',        location or 'Unknown'),
+        ('DEVICE',          ua_info.get('device_type', 'Unknown')),
+        ('BROWSER',         ua_info.get('browser',     'Unknown')),
+        ('OPERATING SYSTEM', ua_info.get('os',         'Unknown')),
+    ]
 
-    except Exception as exc:
-        print(f'[email_alert] OTP send failed: {exc}')
-        return False
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 20px;">
+        A successful login to your account was recorded.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html(detail_rows)}
+      </table>
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0;color:#dc2626;font-size:13px;">
+          If this was <strong>not you</strong>, use <em>Forgot Password</em> on the login
+          page to immediately secure your account.
+        </p>
+      </div>
+    """
+
+    plain = f"""New Login Notification – HDS
+
+Dear {username},
+
+A successful login was recorded on your account.
+
+  Date/Time : {login_time.strftime('%Y-%m-%d %H:%M:%S UTC')}
+  IP Address: {ip}
+  Location  : {location or 'Unknown'}
+  Device    : {ua_info.get('device_type', 'Unknown')}
+  Browser   : {ua_info.get('browser', 'Unknown')}
+  OS        : {ua_info.get('os', 'Unknown')}
+
+If this was NOT you, use Forgot Password on the login page to secure your account.
+
+-- Hacking Detection System (automated message)
+"""
+
+    html = _wrap_html('#0284c7', '&#128274; New Sign-In', 'Login notification for your account', body)
+    msg  = _base_msg('[HDS] New sign-in to your account', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
+
+
+# ── Password changed email ─────────────────────────────────────────────────
+
+def send_password_changed_email(
+    recipient: str,
+    username: str,
+    ip: str,
+    location: str,
+    changed_at: datetime,
+) -> bool:
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 20px;">
+        Your account password was changed successfully.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html([
+            ('DATE & TIME', changed_at.strftime('%Y-%m-%d %H:%M:%S UTC')),
+            ('IP ADDRESS',  ip),
+            ('LOCATION',    location or 'Unknown'),
+        ])}
+      </table>
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0;color:#dc2626;font-size:13px;">
+          If you did <strong>not</strong> make this change, your account may be compromised.
+          Use <em>Forgot Password</em> immediately and contact support.
+        </p>
+      </div>
+    """
+
+    plain = f"""Password Changed – HDS
+
+Dear {username},
+
+Your account password was changed at {changed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}
+from IP {ip} ({location or 'Unknown'}).
+
+If you did NOT make this change, use Forgot Password immediately.
+
+-- Hacking Detection System (automated message)
+"""
+
+    html = _wrap_html('#d97706', '&#128273; Password Changed', 'Your password was updated', body)
+    msg  = _base_msg('[HDS] Your password was changed', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
+
+
+# ── Email address changed email ────────────────────────────────────────────
+
+def send_email_changed_email(
+    recipient: str,
+    username: str,
+    old_email: str,
+    new_email: str,
+    ip: str,
+    location: str,
+    changed_at: datetime,
+) -> bool:
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 20px;">
+        The email address on your account was changed.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html([
+            ('DATE & TIME', changed_at.strftime('%Y-%m-%d %H:%M:%S UTC')),
+            ('FROM',        old_email),
+            ('TO',          new_email),
+            ('IP ADDRESS',  ip),
+            ('LOCATION',    location or 'Unknown'),
+        ])}
+      </table>
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0;color:#dc2626;font-size:13px;">
+          If you did <strong>not</strong> make this change, contact support immediately.
+        </p>
+      </div>
+    """
+
+    plain = f"""Email Address Changed – HDS
+
+Dear {username},
+
+Your account email was changed at {changed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}.
+  From: {old_email}
+  To  : {new_email}
+  IP  : {ip} ({location or 'Unknown'})
+
+If you did NOT make this change, contact support immediately.
+
+-- Hacking Detection System (automated message)
+"""
+
+    html = _wrap_html('#d97706', '&#9993;&#65039; Email Address Changed', 'Account email was updated', body)
+    msg  = _base_msg('[HDS] Your email address was changed', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
+
+
+# ── 2FA status changed email ───────────────────────────────────────────────
+
+def send_2fa_changed_email(
+    recipient: str,
+    username: str,
+    enabled: bool,
+    ip: str,
+    location: str,
+    changed_at: datetime,
+) -> bool:
+    action      = 'enabled' if enabled else 'disabled'
+    color       = '#16a34a' if enabled else '#d97706'
+    icon        = '&#128275;' if enabled else '&#128274;'
+    description = 'Two-Factor Authentication is now active on your account.' if enabled \
+                  else 'Two-Factor Authentication has been turned off.'
+
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 20px;">{description}</p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html([
+            ('DATE & TIME', changed_at.strftime('%Y-%m-%d %H:%M:%S UTC')),
+            ('IP ADDRESS',  ip),
+            ('LOCATION',    location or 'Unknown'),
+            ('STATUS',      f'2FA {action.upper()}'),
+        ])}
+      </table>
+      {'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:14px;"><p style="margin:0;color:#15803d;font-size:13px;">2FA adds an extra layer of protection. Every login now requires a one-time code sent to your email.</p></div>' if enabled else
+       '<div style="background:#fff5f5;border:1px solid #fecaca;border-radius:6px;padding:14px;"><p style="margin:0;color:#dc2626;font-size:13px;">If you did <strong>not</strong> disable 2FA, change your password and re-enable it immediately.</p></div>'}
+    """
+
+    plain = f"""Two-Factor Authentication {action.title()} – HDS
+
+Dear {username},
+
+2FA was {action} on your account at {changed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}
+from IP {ip} ({location or 'Unknown'}).
+
+{'If you did NOT make this change, secure your account immediately.' if not enabled else ''}
+
+-- Hacking Detection System (automated message)
+"""
+
+    html = _wrap_html(color, f'{icon} 2FA {action.title()}', f'Two-Factor Authentication {action}', body)
+    msg  = _base_msg(f'[HDS] Two-Factor Authentication {action}', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
+
+
+# ── Account locked email ───────────────────────────────────────────────────
+
+def send_account_locked_email(
+    recipient: str,
+    username: str,
+    reason: str,
+    locked_until: datetime | None = None,
+) -> bool:
+    unlock_note = (
+        f'<p style="margin:6px 0 0;color:#fca5a5;font-size:13px;">'
+        f'Auto-unlocks at {locked_until.strftime("%H:%M UTC")} if this was a temporary lockout.</p>'
+    ) if locked_until else ''
+
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 20px;">
+        Your account has been locked due to suspicious activity.
+      </p>
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:16px;margin-bottom:20px;">
+        <p style="margin:0 0 6px;color:#dc2626;font-weight:700;font-size:14px;">
+          Reason: {reason}
+        </p>
+        {unlock_note}
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0 0 8px;color:#15803d;font-weight:700;font-size:14px;">
+          To unlock your account:
+        </p>
+        <ul style="margin:0;padding-left:20px;color:#166534;font-size:13px;">
+          <li>Use <strong>Forgot Password</strong> on the login page to reset your password and unlock.</li>
+          <li>Change your password to something strong and unique.</li>
+          <li>Enable Two-Factor Authentication for extra protection.</li>
+        </ul>
+      </div>
+    """
+
+    until_str = f' (auto-unlocks at {locked_until.strftime("%H:%M UTC")})' if locked_until else ''
+    plain = f"""Account Locked – HDS
+
+Dear {username},
+
+Your account has been locked{until_str}.
+
+Reason: {reason}
+
+To unlock: use Forgot Password on the login page to reset your password.
+
+-- Hacking Detection System (automated message)
+"""
+
+    html = _wrap_html('#dc2626', '&#128274; Account Locked', 'Your account access has been restricted', body)
+    msg  = _base_msg('[HDS] Your account has been locked', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)

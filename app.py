@@ -22,10 +22,17 @@ import user_agents as ua_lib
 from config import Config
 from models import (
     db, User, LoginHistory, Alert, OTPCode,
-    KnownIP, KnownDevice, FailedAttempt, device_fingerprint,
+    KnownIP, KnownDevice, FailedAttempt, SecurityToken, device_fingerprint,
 )
 from detection import SuspiciousLoginDetector
-from email_alert import send_alert_email, send_otp_email
+from email_alert import (
+    send_alert_email, send_otp_email,
+    send_login_notification_email,
+    send_password_changed_email,
+    send_email_changed_email,
+    send_2fa_changed_email,
+    send_account_locked_email,
+)
 
 # ── Allow HTTP for OAuth in dev (remove in production) ─────────────────────
 os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
@@ -210,22 +217,33 @@ def mask_email(email: str) -> str:
         return email
 
 
-def get_location(ip: str) -> str:
-    """Return 'City, Region, Country' for an IP using ip-api.com (free, no key)."""
+def get_geo_data(ip: str) -> dict:
+    """Return dict with location, lat, lon, is_vpn from ip-api.com (free, no key)."""
+    blank = {'location': 'Unknown', 'lat': None, 'lon': None, 'is_vpn': False}
     if ip in ('127.0.0.1', '::1', 'localhost', '0.0.0.0'):
-        return 'Local (localhost)'
+        return {**blank, 'location': 'Local (localhost)'}
     try:
         resp = http_requests.get(
-            f'http://ip-api.com/json/{ip}?fields=status,city,regionName,country',
+            f'http://ip-api.com/json/{ip}?fields=status,city,regionName,country,lat,lon,proxy',
             timeout=3,
         )
         data = resp.json()
         if data.get('status') == 'success':
-            parts = [data.get('city', ''), data.get('regionName', ''), data.get('country', '')]
-            return ', '.join(p for p in parts if p) or 'Unknown'
+            parts    = [data.get('city', ''), data.get('regionName', ''), data.get('country', '')]
+            location = ', '.join(p for p in parts if p) or 'Unknown'
+            return {
+                'location': location,
+                'lat':      data.get('lat'),
+                'lon':      data.get('lon'),
+                'is_vpn':   bool(data.get('proxy', False)),
+            }
     except Exception:
         pass
-    return 'Unknown'
+    return blank
+
+
+def get_location(ip: str) -> str:
+    return get_geo_data(ip)['location']
 
 
 def generate_otp() -> str:
@@ -260,7 +278,10 @@ def update_known_device(user_id: int, ua_raw: str, ua_info: dict) -> None:
 
 
 def _record_login(user: User, status: str, ua_info: dict, ip: str,
-                  ua_raw: str, two_fa_required: bool = False) -> LoginHistory:
+                  ua_raw: str, two_fa_required: bool = False,
+                  geo: dict | None = None) -> LoginHistory:
+    if geo is None:
+        geo = get_geo_data(ip)
     record = LoginHistory(
         user_id         = user.id,
         ip_address      = ip,
@@ -268,7 +289,10 @@ def _record_login(user: User, status: str, ua_info: dict, ip: str,
         browser         = ua_info['browser'],
         os              = ua_info['os'],
         user_agent      = ua_raw,
-        location        = get_location(ip),
+        location        = geo['location'],
+        lat             = geo.get('lat'),
+        lon             = geo.get('lon'),
+        is_vpn          = geo.get('is_vpn', False),
         login_time      = datetime.utcnow(),
         login_status    = status,
         two_fa_required = two_fa_required,
@@ -277,19 +301,109 @@ def _record_login(user: User, status: str, ua_info: dict, ip: str,
     return record
 
 
+def calculate_risk_score(reasons: list[str]) -> int:
+    score = 0
+    for r in reasons:
+        rl = r.lower()
+        if 'vpn' in rl or 'proxy' in rl or 'tor' in rl:
+            score += 25
+        elif 'impossible travel' in rl:
+            score += 30
+        elif 'new ip' in rl:
+            score += 15
+        elif 'new device' in rl:
+            score += 15
+        elif 'new browser' in rl:
+            score += 10
+        elif 'new operating system' in rl:
+            score += 10
+        elif 'unusual hour' in rl:
+            score += 10
+        elif 'multiple logins' in rl or 'rapid' in rl:
+            score += 15
+    return min(score, 100)
+
+
+def get_security_recommendations(reasons: list[str], has_2fa: bool) -> list[str]:
+    rl   = ' '.join(r.lower() for r in reasons)
+    recs = []
+    if not has_2fa:
+        recs.append('Enable Two-Factor Authentication for extra account protection.')
+    if 'new ip' in rl or 'new device' in rl:
+        recs.append('Unrecognised device or location — change your password if this was not you.')
+    if 'vpn' in rl or 'proxy' in rl:
+        recs.append('Login came from a VPN or proxy — verify this was you.')
+    if 'impossible travel' in rl:
+        recs.append('Impossible travel detected — your credentials may have been stolen.')
+    if 'unusual hour' in rl:
+        recs.append('Login at an unusual hour — be extra vigilant.')
+    if 'multiple logins' in rl or 'rapid' in rl:
+        recs.append('Multiple logins in a short period — verify your account is secure.')
+    if not recs:
+        recs.append('Review your login history for any unrecognised activity.')
+    return recs
+
+
+def _lock_account(user: User, reason: str, duration_minutes: int = 0) -> None:
+    """Lock account. duration_minutes=0 = indefinite (requires password reset to unlock)."""
+    user.is_locked   = True
+    user.lock_reason = reason
+    user.locked_until = (
+        datetime.utcnow() + timedelta(minutes=duration_minutes)
+        if duration_minutes else None
+    )
+    db.session.flush()
+
+
 def _fire_alert(user: User, record: LoginHistory, reasons: list,
                 ip: str, ua_info: dict, alert_type: str = 'suspicious_login'):
+    risk_score = calculate_risk_score(reasons)
+    recs       = get_security_recommendations(reasons, user.two_fa_enabled)
+
+    if record:
+        record.risk_score = risk_score
+
     alert = Alert(
         user_id          = user.id,
-        login_history_id = record.id,
+        login_history_id = record.id if record else None,
         alert_type       = alert_type,
         message          = '; '.join(reasons),
         created_at       = datetime.utcnow(),
     )
     db.session.add(alert)
+    db.session.flush()
+
+    confirm_url = deny_url = ''
+    if record and record.id:
+        confirm_tok = SecurityToken(
+            user_id          = user.id,
+            token            = secrets.token_urlsafe(32),
+            token_type       = 'confirm_login',
+            login_history_id = record.id,
+            expires_at       = datetime.utcnow() + timedelta(hours=48),
+        )
+        deny_tok = SecurityToken(
+            user_id          = user.id,
+            token            = secrets.token_urlsafe(32),
+            token_type       = 'deny_login',
+            login_history_id = record.id,
+            expires_at       = datetime.utcnow() + timedelta(hours=48),
+        )
+        db.session.add(confirm_tok)
+        db.session.add(deny_tok)
+        db.session.flush()
+        try:
+            confirm_url = url_for('security_confirm', token=confirm_tok.token, _external=True)
+            deny_url    = url_for('security_deny',    token=deny_tok.token,    _external=True)
+        except Exception:
+            pass
+
     try:
+        location = (record.location or '') if record else ''
         sent = send_alert_email(
-            user.email, user.username, ip, ua_info, reasons, datetime.utcnow()
+            user.email, user.username, ip, ua_info, reasons, datetime.utcnow(),
+            location=location, risk_score=risk_score, recommendations=recs,
+            confirm_url=confirm_url, deny_url=deny_url,
         )
         alert.email_sent = sent
     except Exception:
@@ -457,6 +571,28 @@ def login():
 
         user = User.query.filter_by(username=username).first()
 
+        # ── Account lockout check ──────────────────────────────────────────
+        if user and user.is_locked:
+            if user.locked_until and datetime.utcnow() >= user.locked_until:
+                user.is_locked    = False
+                user.locked_until = None
+                user.lock_reason  = None
+                db.session.commit()
+            else:
+                if user.locked_until:
+                    flash(
+                        f'Account locked until {user.locked_until.strftime("%H:%M UTC")}. '
+                        'Use "Forgot password?" to unlock immediately.',
+                        'danger',
+                    )
+                else:
+                    flash(
+                        'Account locked due to suspicious activity. '
+                        'Use "Forgot password?" to unlock.',
+                        'danger',
+                    )
+                return render_template('login.html')
+
         if user and user.check_password(password):
             if user.two_fa_enabled:
                 record = _record_login(user, 'pending_2fa', ua, ip, ua_raw,
@@ -497,7 +633,8 @@ def login():
                 return redirect(url_for('verify_2fa'))
 
             else:
-                record = _record_login(user, 'success', ua, ip, ua_raw)
+                geo    = get_geo_data(ip)
+                record = _record_login(user, 'success', ua, ip, ua_raw, geo=geo)
                 db.session.flush()
                 is_susp = _run_detection_and_commit(user, record, ip, ua)
                 update_known_ip(user.id, ip)
@@ -514,6 +651,14 @@ def login():
                     )
                 else:
                     flash('Welcome back!', 'success')
+                    if not app.config.get('TESTING', False):
+                        try:
+                            send_login_notification_email(
+                                user.email, user.username, ip,
+                                geo['location'], ua, datetime.utcnow(),
+                            )
+                        except Exception:
+                            pass
 
                 next_page = request.args.get('next')
                 return redirect(next_page or url_for('dashboard'))
@@ -535,11 +680,17 @@ def login():
                     .count()
                 )
                 if fail_count >= max_fail:
-                    _fire_alert(
-                        user, record,
-                        [f'{fail_count} failed login attempts in the last {window} min from IP {ip}'],
-                        ip, ua, alert_type='brute_force',
-                    )
+                    reason      = f'{fail_count} failed login attempts in the last {window} min from IP {ip}'
+                    lockout_min = app.config.get('LOCKOUT_DURATION', 30)
+                    _lock_account(user, reason, lockout_min)
+                    _fire_alert(user, record, [reason], ip, ua, alert_type='brute_force')
+                    if not app.config.get('TESTING', False):
+                        try:
+                            send_account_locked_email(
+                                user.email, user.username, reason, user.locked_until
+                            )
+                        except Exception:
+                            pass
                 db.session.commit()
 
             flash('Invalid username or password.', 'danger')
@@ -600,6 +751,14 @@ def verify_2fa():
                 )
             else:
                 flash('Verification successful. Welcome back!', 'success')
+                if record and not app.config.get('TESTING', False):
+                    try:
+                        send_login_notification_email(
+                            user.email, user.username, ip,
+                            record.location or '', ua, datetime.utcnow(),
+                        )
+                    except Exception:
+                        pass
             return redirect(url_for('dashboard'))
 
         else:
@@ -758,6 +917,9 @@ def reset_password():
             flash('Passwords do not match.', 'danger')
         else:
             user.set_password(new_password)
+            user.is_locked    = False
+            user.locked_until = None
+            user.lock_reason  = None
             db.session.commit()
             for k in ('pending_reset_user_id', 'pending_reset_otp_id', 'reset_verified'):
                 flask_session.pop(k, None)
@@ -765,6 +927,47 @@ def reset_password():
             return redirect(url_for('login'))
 
     return render_template('reset_password.html', username=user.username)
+
+
+# ── Security confirm/deny (Was this you?) ─────────────────────────────────
+@app.route('/security/confirm/<token>')
+def security_confirm(token: str):
+    tok = SecurityToken.query.filter_by(token=token, token_type='confirm_login').first()
+    if not tok or tok.is_used or tok.is_expired:
+        flash('This confirmation link is invalid or has expired.', 'danger')
+        return redirect(url_for('login'))
+    tok.is_used = True
+    if tok.login_history_id:
+        rec = LoginHistory.query.get(tok.login_history_id)
+        if rec:
+            rec.user_confirmed = True
+    db.session.commit()
+    flash('Login confirmed as legitimate. Thank you for keeping your account secure.', 'success')
+    return redirect(url_for('login'))
+
+
+@app.route('/security/deny/<token>')
+def security_deny(token: str):
+    tok = SecurityToken.query.filter_by(token=token, token_type='deny_login').first()
+    if not tok or tok.is_used or tok.is_expired:
+        flash('This security link is invalid or has expired.', 'danger')
+        return redirect(url_for('login'))
+    tok.is_used = True
+    user = User.query.get(tok.user_id)
+    if user:
+        _lock_account(user, 'Account locked by user: suspicious login denied via email link')
+        if not app.config.get('TESTING', False):
+            try:
+                send_account_locked_email(user.email, user.username, 'Suspicious login denied by account owner')
+            except Exception:
+                pass
+    db.session.commit()
+    flash(
+        'Your account has been secured and locked. '
+        'Use "Forgot password?" to reset your password and regain access.',
+        'warning',
+    )
+    return redirect(url_for('login'))
 
 
 # ── Logout ────────────────────────────────────────────────────────────────
@@ -865,15 +1068,29 @@ def profile():
         cur_password = request.form.get('current_password', '')
         new_password = request.form.get('new_password', '')
         confirm      = request.form.get('confirm_password', '')
+        ip           = get_client_ip()
+        location     = get_location(ip)
+        now          = datetime.utcnow()
 
         if action == 'email':
             if new_email and new_email != current_user.email:
                 if User.query.filter_by(email=new_email).first():
                     flash('That email is already in use.', 'danger')
                 else:
+                    old_email = current_user.email
                     current_user.email = new_email
+                    db.session.commit()
                     flash('Email address updated.', 'success')
-            db.session.commit()
+                    if not app.config.get('TESTING', False):
+                        try:
+                            send_email_changed_email(
+                                new_email, current_user.username,
+                                old_email, new_email, ip, location, now,
+                            )
+                        except Exception:
+                            pass
+            else:
+                db.session.commit()
 
         elif action == 'password':
             if not current_user.check_password(cur_password):
@@ -886,16 +1103,37 @@ def profile():
                 current_user.set_password(new_password)
                 db.session.commit()
                 flash('Password updated successfully.', 'success')
+                if not app.config.get('TESTING', False):
+                    try:
+                        send_password_changed_email(
+                            current_user.email, current_user.username, ip, location, now
+                        )
+                    except Exception:
+                        pass
 
         elif action == 'enable_2fa':
             current_user.two_fa_enabled = True
             db.session.commit()
             flash('Two-Factor Authentication enabled. Your login will now require an email code.', 'success')
+            if not app.config.get('TESTING', False):
+                try:
+                    send_2fa_changed_email(
+                        current_user.email, current_user.username, True, ip, location, now
+                    )
+                except Exception:
+                    pass
 
         elif action == 'disable_2fa':
             current_user.two_fa_enabled = False
             db.session.commit()
             flash('Two-Factor Authentication disabled.', 'info')
+            if not app.config.get('TESTING', False):
+                try:
+                    send_2fa_changed_email(
+                        current_user.email, current_user.username, False, ip, location, now
+                    )
+                except Exception:
+                    pass
 
         return redirect(url_for('profile'))
 
@@ -1017,6 +1255,7 @@ def simulate():
 @login_required
 def clear_test_data():
     uid = current_user.id
+    SecurityToken.query.filter_by(user_id=uid).delete()
     OTPCode.query.filter_by(user_id=uid).delete()
     LoginHistory.query.filter_by(user_id=uid).delete()
     Alert.query.filter_by(user_id=uid).delete()

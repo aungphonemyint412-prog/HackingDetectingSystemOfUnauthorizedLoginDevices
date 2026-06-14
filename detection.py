@@ -8,7 +8,10 @@ Rules evaluated on every successful login:
   R4 – New operating-system family
   R5 – Login during unusual hours (00:00–04:59)
   R6 – Rapid multiple successful logins in short window
+  R7 – Impossible travel (speed between consecutive logins > threshold km/h)
+  R8 – VPN / proxy / TOR exit node detected
 """
+import math
 from datetime import datetime, timedelta
 from flask import current_app
 from models import LoginHistory
@@ -27,14 +30,16 @@ class SuspiciousLoginDetector:
         """Return (is_suspicious, list_of_reasons)."""
         prev = self._previous_logins()
 
-        if prev:                      # skip all checks on the very first login
+        if prev:                      # skip most checks on the very first login
             self._r1_new_ip(prev)
             self._r2_new_device(prev)
             self._r3_new_browser(prev)
             self._r4_new_os(prev)
             self._r6_rapid_logins()
+            self._r7_impossible_travel(prev)
 
         self._r5_unusual_hour()       # always check time
+        self._r8_vpn_proxy()          # always check VPN flag
 
         return bool(self.reasons), self.reasons
 
@@ -100,10 +105,10 @@ class SuspiciousLoginDetector:
             )
 
     def _r6_rapid_logins(self):
-        window   = current_app.config.get('RAPID_LOGIN_WINDOW', 10)
+        window    = current_app.config.get('RAPID_LOGIN_WINDOW', 10)
         threshold = current_app.config.get('RAPID_LOGIN_COUNT', 3)
-        since    = datetime.utcnow() - timedelta(minutes=window)
-        count    = (
+        since     = datetime.utcnow() - timedelta(minutes=window)
+        count     = (
             LoginHistory.query
             .filter_by(user_id=self.user.id, login_status='success')
             .filter(LoginHistory.login_time >= since)
@@ -114,4 +119,40 @@ class SuspiciousLoginDetector:
             self.reasons.append(
                 f'Multiple logins in short period: '
                 f'{count} successful logins in the last {window} minutes'
+            )
+
+    def _r7_impossible_travel(self, prev):
+        """Flag if consecutive logins are geographically impossible given elapsed time."""
+        max_speed = current_app.config.get('IMPOSSIBLE_TRAVEL_SPEED', 900)
+        cur = self.current
+        if cur.lat is None or cur.lon is None:
+            return
+        for p in prev:
+            if p.lat is None or p.lon is None:
+                continue
+            hours = (cur.login_time - p.login_time).total_seconds() / 3600.0
+            if hours <= 0.25:          # less than 15 min — skip, same session noise
+                continue
+            dist_km = self._haversine(p.lat, p.lon, cur.lat, cur.lon)
+            speed   = dist_km / hours
+            if speed > max_speed:
+                self.reasons.append(
+                    f'Impossible travel: {dist_km:.0f} km in {hours:.1f} h '
+                    f'({speed:.0f} km/h) from previous login location'
+                )
+            break  # only compare with the most recent geo-located login
+
+    @staticmethod
+    def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        R = 6371.0
+        φ1, φ2 = math.radians(lat1), math.radians(lat2)
+        dφ = math.radians(lat2 - lat1)
+        dλ = math.radians(lon2 - lon1)
+        a  = math.sin(dφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(dλ / 2) ** 2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    def _r8_vpn_proxy(self):
+        if getattr(self.current, 'is_vpn', False):
+            self.reasons.append(
+                'VPN / proxy / TOR exit node detected: login may be masking true location'
             )

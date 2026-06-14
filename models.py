@@ -13,27 +13,32 @@ class User(UserMixin, db.Model):
     id             = db.Column(db.Integer, primary_key=True)
     username       = db.Column(db.String(80),  unique=True, nullable=False)
     email          = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash  = db.Column(db.String(256))          # nullable for Google-only users
+    password_hash  = db.Column(db.String(256))
     google_id      = db.Column(db.String(100), unique=True)
     profile_pic    = db.Column(db.Text)
     email_verified = db.Column(db.Boolean, default=False)
     two_fa_enabled = db.Column(db.Boolean, default=False)
     is_active      = db.Column(db.Boolean, default=True)
+    is_locked      = db.Column(db.Boolean, default=False)
+    locked_until   = db.Column(db.DateTime, nullable=True)
+    lock_reason    = db.Column(db.String(300), nullable=True)
     created_at     = db.Column(db.DateTime, default=datetime.utcnow)
     last_login     = db.Column(db.DateTime)
 
-    login_history   = db.relationship('LoginHistory',  backref='user', lazy='dynamic',
-                                       cascade='all, delete-orphan')
-    alerts          = db.relationship('Alert',          backref='user', lazy='dynamic',
-                                       cascade='all, delete-orphan')
-    otp_codes       = db.relationship('OTPCode',        backref='user', lazy='dynamic',
-                                       cascade='all, delete-orphan')
-    known_ips       = db.relationship('KnownIP',        backref='user', lazy='dynamic',
-                                       cascade='all, delete-orphan')
-    known_devices   = db.relationship('KnownDevice',    backref='user', lazy='dynamic',
-                                       cascade='all, delete-orphan')
-    failed_attempts = db.relationship('FailedAttempt',  backref='user', lazy='dynamic',
-                                       cascade='all, delete-orphan')
+    login_history    = db.relationship('LoginHistory',  backref='user', lazy='dynamic',
+                                        cascade='all, delete-orphan')
+    alerts           = db.relationship('Alert',          backref='user', lazy='dynamic',
+                                        cascade='all, delete-orphan')
+    otp_codes        = db.relationship('OTPCode',        backref='user', lazy='dynamic',
+                                        cascade='all, delete-orphan')
+    known_ips        = db.relationship('KnownIP',        backref='user', lazy='dynamic',
+                                        cascade='all, delete-orphan')
+    known_devices    = db.relationship('KnownDevice',    backref='user', lazy='dynamic',
+                                        cascade='all, delete-orphan')
+    failed_attempts  = db.relationship('FailedAttempt',  backref='user', lazy='dynamic',
+                                        cascade='all, delete-orphan')
+    security_tokens  = db.relationship('SecurityToken',  backref='user', lazy='dynamic',
+                                        cascade='all, delete-orphan')
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
@@ -58,8 +63,13 @@ class LoginHistory(db.Model):
     os                 = db.Column(db.String(120))
     user_agent         = db.Column(db.String(500))
     location           = db.Column(db.String(200))
+    lat                = db.Column(db.Float, nullable=True)
+    lon                = db.Column(db.Float, nullable=True)
+    is_vpn             = db.Column(db.Boolean, default=False)
+    risk_score         = db.Column(db.Integer, default=0)
+    user_confirmed     = db.Column(db.Boolean, nullable=True)
     login_time         = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    login_status       = db.Column(db.String(20))   # success | failed | failed_2fa | pending_2fa
+    login_status       = db.Column(db.String(20))
     is_suspicious      = db.Column(db.Boolean, default=False)
     suspicious_reasons = db.Column(db.Text)
     two_fa_required    = db.Column(db.Boolean, default=False)
@@ -153,6 +163,26 @@ class FailedAttempt(db.Model):
 
     def __repr__(self) -> str:
         return f'<FailedAttempt user={self.user_id} ip={self.ip_address}>'
+
+
+class SecurityToken(db.Model):
+    __tablename__ = 'security_tokens'
+
+    id               = db.Column(db.Integer, primary_key=True)
+    user_id          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    token            = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    token_type       = db.Column(db.String(50))  # confirm_login | deny_login
+    login_history_id = db.Column(db.Integer, db.ForeignKey('login_history.id'), nullable=True)
+    is_used          = db.Column(db.Boolean, default=False)
+    expires_at       = db.Column(db.DateTime, nullable=False)
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def is_expired(self) -> bool:
+        return datetime.utcnow() > self.expires_at
+
+    def __repr__(self) -> str:
+        return f'<SecurityToken user={self.user_id} type={self.token_type}>'
 
 
 def device_fingerprint(ua_string: str) -> str:
