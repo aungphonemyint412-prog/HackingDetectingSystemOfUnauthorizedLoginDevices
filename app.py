@@ -22,16 +22,21 @@ import user_agents as ua_lib
 from config import Config
 from models import (
     db, User, LoginHistory, Alert, OTPCode,
-    KnownIP, KnownDevice, FailedAttempt, SecurityToken, device_fingerprint,
+    KnownIP, KnownDevice, FailedAttempt, SecurityToken,
+    EmailQueue, SecurityIncident, device_fingerprint,
 )
 from detection import SuspiciousLoginDetector
 from email_alert import (
+    get_severity,
     send_alert_email, send_otp_email,
     send_login_notification_email,
+    send_failed_login_email,
     send_password_changed_email,
     send_email_changed_email,
     send_2fa_changed_email,
+    send_2fa_recovery_email,
     send_account_locked_email,
+    send_soc_admin_email,
 )
 
 # ── Allow HTTP for OAuth in dev (remove in production) ─────────────────────
@@ -301,6 +306,78 @@ def _record_login(user: User, status: str, ua_info: dict, ip: str,
     return record
 
 
+def _can_send_email(user_id: int, email_type: str) -> bool:
+    """Return True if this email type hasn't hit its rate limit for this user."""
+    limits = app.config.get('EMAIL_RATE_LIMITS', {})
+    if email_type not in limits:
+        return True  # no rate limit defined — always allow
+    max_count, window_min = limits[email_type]
+    since = datetime.utcnow() - timedelta(minutes=window_min)
+    count = EmailQueue.query.filter(
+        EmailQueue.user_id    == user_id,
+        EmailQueue.email_type == email_type,
+        EmailQueue.created_at >= since,
+        EmailQueue.status     != 'skipped',
+    ).count()
+    return count < max_count
+
+
+def _log_email(user_id, recipient: str, email_type: str,
+               subject: str, sent: bool, error: str = '') -> None:
+    """Record every email attempt in EmailQueue for audit + rate limiting."""
+    entry = EmailQueue(
+        user_id    = user_id,
+        recipient  = recipient,
+        email_type = email_type,
+        subject    = subject,
+        status     = 'sent' if sent else 'failed',
+        sent_at    = datetime.utcnow() if sent else None,
+        error_msg  = error or None,
+    )
+    db.session.add(entry)
+
+
+def _log_skipped_email(user_id, recipient: str, email_type: str, subject: str) -> None:
+    db.session.add(EmailQueue(
+        user_id=user_id, recipient=recipient, email_type=email_type,
+        subject=subject, status='skipped',
+    ))
+
+
+def _create_incident(user_id, incident_type: str, severity: str,
+                     details: str, source_ip: str, risk_score: int = 0):
+    """Create a SecurityIncident record and return it."""
+    today = datetime.utcnow().strftime('%Y%m%d')
+    count = SecurityIncident.query.filter(
+        SecurityIncident.incident_ref.like(f'INC-{today}-%')
+    ).count()
+    ref = f'INC-{today}-{count + 1:04d}'
+    inc = SecurityIncident(
+        incident_ref  = ref,
+        user_id       = user_id,
+        incident_type = incident_type,
+        severity      = severity,
+        details       = details,
+        source_ip     = source_ip,
+        risk_score    = risk_score,
+    )
+    db.session.add(inc)
+    db.session.flush()
+    return inc
+
+
+def _detect_credential_stuffing(ip: str, window_min: int = 10, min_accounts: int = 3) -> bool:
+    """Return True if the same IP failed logins against multiple distinct accounts recently."""
+    since = datetime.utcnow() - timedelta(minutes=window_min)
+    distinct = (
+        db.session.query(func.count(func.distinct(FailedAttempt.user_id)))
+        .filter(FailedAttempt.ip_address == ip)
+        .filter(FailedAttempt.attempt_time >= since)
+        .scalar() or 0
+    )
+    return distinct >= min_accounts
+
+
 def calculate_risk_score(reasons: list[str]) -> int:
     score = 0
     for r in reasons:
@@ -358,6 +435,7 @@ def _lock_account(user: User, reason: str, duration_minutes: int = 0) -> None:
 def _fire_alert(user: User, record: LoginHistory, reasons: list,
                 ip: str, ua_info: dict, alert_type: str = 'suspicious_login'):
     risk_score = calculate_risk_score(reasons)
+    severity   = get_severity(risk_score)
     recs       = get_security_recommendations(reasons, user.two_fa_enabled)
 
     if record:
@@ -371,6 +449,17 @@ def _fire_alert(user: User, record: LoginHistory, reasons: list,
         created_at       = datetime.utcnow(),
     )
     db.session.add(alert)
+
+    # ── Create security incident ───────────────────────────────────────────
+    inc = _create_incident(
+        user_id       = user.id,
+        incident_type = alert_type,
+        severity      = severity.lower(),
+        details       = '; '.join(reasons),
+        source_ip     = ip,
+        risk_score    = risk_score,
+    )
+
     db.session.flush()
 
     confirm_url = deny_url = ''
@@ -398,16 +487,32 @@ def _fire_alert(user: User, record: LoginHistory, reasons: list,
         except Exception:
             pass
 
-    try:
-        location = (record.location or '') if record else ''
-        sent = send_alert_email(
-            user.email, user.username, ip, ua_info, reasons, datetime.utcnow(),
-            location=location, risk_score=risk_score, recommendations=recs,
-            confirm_url=confirm_url, deny_url=deny_url,
-        )
-        alert.email_sent = sent
-    except Exception:
-        pass
+    if not app.config.get('TESTING', False):
+        try:
+            location = (record.location or '') if record else ''
+            sent = send_alert_email(
+                user.email, user.username, ip, ua_info, reasons, datetime.utcnow(),
+                location=location, risk_score=risk_score, recommendations=recs,
+                confirm_url=confirm_url, deny_url=deny_url,
+            )
+            alert.email_sent = sent
+            _log_email(user.id, user.email, 'alert',
+                       f'[{severity}] Security Alert', sent)
+        except Exception:
+            pass
+
+        # ── SOC admin notification for High / Critical ─────────────────────
+        if severity in ('High', 'Critical'):
+            admin_emails = app.config.get('ADMIN_EMAILS', [])
+            if admin_emails:
+                try:
+                    send_soc_admin_email(
+                        admin_emails, inc.incident_ref, alert_type,
+                        severity, '; '.join(reasons), ip, user.username,
+                        risk_score, datetime.utcnow(),
+                    )
+                except Exception:
+                    pass
 
 
 def _run_detection_and_commit(user: User, record: LoginHistory,
@@ -689,8 +794,52 @@ def login():
                             send_account_locked_email(
                                 user.email, user.username, reason, user.locked_until
                             )
+                            _log_email(user.id, user.email, 'account_locked',
+                                       '[HDS] Your account has been locked', True)
                         except Exception:
                             pass
+                else:
+                    # Single failed login notification (rate-limited)
+                    if not app.config.get('TESTING', False):
+                        if _can_send_email(user.id, 'failed_login'):
+                            try:
+                                loc  = (record.location or get_location(ip))
+                                sent = send_failed_login_email(
+                                    user.email, user.username, ip, loc, ua, datetime.utcnow()
+                                )
+                                _log_email(user.id, user.email, 'failed_login',
+                                           '[HDS] Failed login attempt on your account', sent)
+                            except Exception:
+                                pass
+                        else:
+                            _log_skipped_email(user.id, user.email, 'failed_login',
+                                               '[HDS] Failed login attempt on your account')
+
+                # Credential stuffing detection
+                if _detect_credential_stuffing(ip):
+                    cs_reason = (f'Credential stuffing detected: multiple accounts targeted '
+                                 f'from IP {ip} in the last 10 minutes')
+                    _create_incident(
+                        user_id       = user.id,
+                        incident_type = 'credential_stuffing',
+                        severity      = 'high',
+                        details       = cs_reason,
+                        source_ip     = ip,
+                        risk_score    = 75,
+                    )
+                    if not app.config.get('TESTING', False):
+                        admin_emails = app.config.get('ADMIN_EMAILS', [])
+                        if admin_emails:
+                            try:
+                                send_soc_admin_email(
+                                    admin_emails,
+                                    f'CS-{datetime.utcnow().strftime("%Y%m%d%H%M%S")}',
+                                    'credential_stuffing', 'High',
+                                    cs_reason, ip, user.username, 75, datetime.utcnow(),
+                                )
+                            except Exception:
+                                pass
+
                 db.session.commit()
 
             flash('Invalid username or password.', 'danger')

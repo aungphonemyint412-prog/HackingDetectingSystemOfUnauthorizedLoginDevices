@@ -37,3 +37,19 @@ class Config:
     HISTORY_LOOKUP             = 50
     LOCKOUT_DURATION           = 30   # minutes to lock after brute force
     IMPOSSIBLE_TRAVEL_SPEED    = 900  # km/h threshold for R7
+
+    # ── Admin / SOC ────────────────────────────────────────────────────────
+    ADMIN_EMAILS = [
+        e.strip() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()
+    ]
+
+    # ── Email rate limits: {email_type: (max_count, window_minutes)} ───────
+    EMAIL_RATE_LIMITS = {
+        'login_notification': (3,  360),   # max 3 per 6 h
+        'failed_login':       (1,   30),   # max 1 per 30 min
+        'password_changed':   (2,   60),   # max 2 per hour
+        'email_changed':      (2,   60),
+        'twofa_changed':      (2,   60),
+        'twofa_recovery':     (2,   60),
+    }
+    # alert / account_locked / admin_soc are never rate-limited

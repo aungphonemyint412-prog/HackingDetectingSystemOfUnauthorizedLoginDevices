@@ -185,5 +185,45 @@ class SecurityToken(db.Model):
         return f'<SecurityToken user={self.user_id} type={self.token_type}>'
 
 
+class EmailQueue(db.Model):
+    """Log of every security email attempted — enables rate limiting and audit trail."""
+    __tablename__ = 'email_queue'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    recipient  = db.Column(db.String(120), nullable=False)
+    email_type = db.Column(db.String(50))   # alert | login_notification | failed_login | etc.
+    subject    = db.Column(db.String(300))
+    status     = db.Column(db.String(20), default='sent')  # sent | failed | skipped
+    attempts   = db.Column(db.Integer, default=1)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    sent_at    = db.Column(db.DateTime, nullable=True)
+    error_msg  = db.Column(db.String(500), nullable=True)
+
+    def __repr__(self) -> str:
+        return f'<EmailQueue {self.email_type} to={self.recipient} status={self.status}>'
+
+
+class SecurityIncident(db.Model):
+    """Tracks security incidents created from suspicious events."""
+    __tablename__ = 'security_incidents'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    incident_ref  = db.Column(db.String(25), unique=True, index=True)   # INC-YYYYMMDD-NNNN
+    user_id       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    incident_type = db.Column(db.String(100))   # suspicious_login | brute_force | credential_stuffing | etc.
+    severity      = db.Column(db.String(20))    # informational | low | medium | high | critical
+    status        = db.Column(db.String(20), default='open')   # open | investigating | resolved
+    details       = db.Column(db.Text)
+    source_ip     = db.Column(db.String(45))
+    risk_score    = db.Column(db.Integer, default=0)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    updated_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    resolved_at   = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f'<SecurityIncident {self.incident_ref} severity={self.severity} status={self.status}>'
+
+
 def device_fingerprint(ua_string: str) -> str:
     return hashlib.md5(ua_string.encode()).hexdigest()[:32]

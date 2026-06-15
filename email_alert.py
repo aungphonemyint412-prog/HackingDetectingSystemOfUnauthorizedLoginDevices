@@ -10,6 +10,25 @@ from email.mime.text import MIMEText
 from datetime import datetime
 
 
+# ── Severity ──────────────────────────────────────────────────────────────
+
+def get_severity(risk_score: int) -> str:
+    if risk_score == 0:   return 'Informational'
+    if risk_score <= 25:  return 'Low'
+    if risk_score <= 50:  return 'Medium'
+    if risk_score <= 75:  return 'High'
+    return 'Critical'
+
+
+_SEVERITY_COLORS = {
+    'Informational': '#0284c7',
+    'Low':           '#16a34a',
+    'Medium':        '#ca8a04',
+    'High':          '#ea580c',
+    'Critical':      '#dc2626',
+}
+
+
 # ── Shared helpers ─────────────────────────────────────────────────────────
 
 def _credentials() -> tuple[str, str]:
@@ -112,19 +131,11 @@ def send_alert_email(
     if recommendations is None:
         recommendations = ['If this was NOT you, change your password immediately.']
 
-    reasons_html = ''.join(f'<li>{r}</li>' for r in reasons)
-    recs_html    = ''.join(f'<li>{r}</li>' for r in recommendations)
+    severity      = get_severity(risk_score)
+    badge_color   = _SEVERITY_COLORS[severity]
+    reasons_html  = ''.join(f'<li>{r}</li>' for r in reasons)
+    recs_html     = ''.join(f'<li>{r}</li>' for r in recommendations)
     reasons_plain = '\n'.join(f'  • {r}' for r in reasons)
-
-    # Risk badge colour
-    if risk_score >= 76:
-        badge_color = '#dc2626'
-    elif risk_score >= 51:
-        badge_color = '#ea580c'
-    elif risk_score >= 26:
-        badge_color = '#ca8a04'
-    else:
-        badge_color = '#16a34a'
 
     detail_rows = [
         ('DATE & TIME',     login_time.strftime('%Y-%m-%d %H:%M:%S UTC')),
@@ -166,8 +177,12 @@ def send_alert_email(
         Suspicious login activity was detected on your account.
       </p>
 
-      <div style="display:flex;align-items:center;margin:0 0 20px;">
+      <div style="margin:0 0 20px;">
         <span style="background:{badge_color};color:#fff;border-radius:20px;
+                     padding:4px 14px;font-size:13px;font-weight:700;margin-right:8px;">
+          {severity}
+        </span>
+        <span style="background:#f1f5f9;color:#334155;border-radius:20px;
                      padding:4px 14px;font-size:13px;font-weight:700;">
           Risk Score: {risk_score}/100
         </span>
@@ -223,8 +238,8 @@ Suspicious Reasons:
 -- Hacking Detection System (automated alert)
 """
 
-    html = _wrap_html('#dc3545', '&#9888;&#65039; Security Alert', 'Suspicious Login Detected', body)
-    msg  = _base_msg('[HDS] Security Alert: Suspicious Login Detected', recipient)
+    html = _wrap_html(badge_color, '&#9888;&#65039; Security Alert', f'{severity} — Suspicious Login Detected', body)
+    msg  = _base_msg(f'[HDS] [{severity}] Security Alert: Suspicious Login Detected', recipient)
     msg.attach(MIMEText(plain, 'plain'))
     msg.attach(MIMEText(html,  'html'))
     return _smtp_send(msg)
@@ -611,3 +626,205 @@ To unlock: use Forgot Password on the login page to reset your password.
     msg.attach(MIMEText(plain, 'plain'))
     msg.attach(MIMEText(html,  'html'))
     return _smtp_send(msg)
+
+
+# ── Failed login notification ──────────────────────────────────────────────
+
+def send_failed_login_email(
+    recipient: str,
+    username: str,
+    ip: str,
+    location: str,
+    ua_info: dict,
+    attempt_time: datetime,
+) -> bool:
+    """Notify user of a single failed login attempt (rate-limited by caller)."""
+    detail_rows = [
+        ('DATE & TIME',     attempt_time.strftime('%Y-%m-%d %H:%M:%S UTC')),
+        ('IP ADDRESS',      ip),
+        ('LOCATION',        location or 'Unknown'),
+        ('DEVICE',          ua_info.get('device_type', 'Unknown')),
+        ('BROWSER',         ua_info.get('browser',     'Unknown')),
+        ('OPERATING SYSTEM', ua_info.get('os',         'Unknown')),
+    ]
+
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 20px;">
+        A failed login attempt was recorded on your account.
+        If this was you entering the wrong password, no action is needed.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html(detail_rows)}
+      </table>
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0;color:#dc2626;font-size:13px;">
+          If you did <strong>not</strong> attempt to log in, someone may be trying to
+          access your account. Use <em>Forgot Password</em> to secure it immediately.
+        </p>
+      </div>
+    """
+
+    plain = f"""Failed Login Attempt – HDS
+
+Dear {username},
+
+A failed login attempt was recorded at {attempt_time.strftime('%Y-%m-%d %H:%M:%S UTC')}.
+
+  IP Address: {ip}
+  Location  : {location or 'Unknown'}
+  Device    : {ua_info.get('device_type', 'Unknown')}
+  Browser   : {ua_info.get('browser', 'Unknown')}
+  OS        : {ua_info.get('os', 'Unknown')}
+
+If this was NOT you, use Forgot Password on the login page immediately.
+
+-- Hacking Detection System (automated message)
+"""
+
+    html = _wrap_html('#d97706', '&#9888; Failed Login Attempt', 'Someone tried to access your account', body)
+    msg  = _base_msg('[HDS] Failed login attempt on your account', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
+
+
+# ── 2FA recovery email ─────────────────────────────────────────────────────
+
+def send_2fa_recovery_email(
+    recipient: str,
+    username: str,
+    ip: str,
+    location: str,
+    recovered_at: datetime,
+) -> bool:
+    """Sent when a password reset is completed and 2FA is still active on the account."""
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">Dear <strong>{username}</strong>,</p>
+      <p style="color:#475569;margin:0 0 20px;">
+        Your account password was reset via the <em>Forgot Password</em> flow.
+        Your Two-Factor Authentication (2FA) is still active.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html([
+            ('DATE & TIME', recovered_at.strftime('%Y-%m-%d %H:%M:%S UTC')),
+            ('IP ADDRESS',  ip),
+            ('LOCATION',    location or 'Unknown'),
+            ('2FA STATUS',  'Still ENABLED — required on next login'),
+        ])}
+      </table>
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0;color:#dc2626;font-size:13px;">
+          If you did <strong>not</strong> request a password reset, your account may be
+          compromised. Log in immediately and review your security settings.
+        </p>
+      </div>
+    """
+
+    plain = f"""2FA Recovery Notice – HDS
+
+Dear {username},
+
+Your password was reset at {recovered_at.strftime('%Y-%m-%d %H:%M:%S UTC')}
+from IP {ip} ({location or 'Unknown'}).
+
+Your 2FA is still active — your next login will require an email verification code.
+
+If you did NOT request this reset, log in and review your security settings immediately.
+
+-- Hacking Detection System (automated message)
+"""
+
+    html = _wrap_html('#7c3aed', '&#128275; 2FA Recovery Notice', 'Account recovered — 2FA still active', body)
+    msg  = _base_msg('[HDS] Password reset completed — 2FA still active', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
+
+
+# ── SOC admin alert ────────────────────────────────────────────────────────
+
+def send_soc_admin_email(
+    admin_emails: list[str],
+    incident_ref: str,
+    incident_type: str,
+    severity: str,
+    details: str,
+    source_ip: str,
+    username: str,
+    risk_score: int,
+    occurred_at: datetime,
+) -> bool:
+    """Fire a SOC-level alert to admin addresses for High/Critical incidents."""
+    if not admin_emails:
+        return False
+
+    color = _SEVERITY_COLORS.get(severity, '#dc2626')
+
+    body = f"""
+      <p style="margin:0 0 16px;color:#1e293b;">
+        <strong>SOC Alert — Action may be required.</strong>
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;margin-bottom:20px;">
+        {_detail_rows_html([
+            ('INCIDENT REF',  incident_ref),
+            ('TYPE',          incident_type.replace('_', ' ').title()),
+            ('SEVERITY',      severity.upper()),
+            ('RISK SCORE',    f'{risk_score}/100'),
+            ('AFFECTED USER', username),
+            ('SOURCE IP',     source_ip),
+            ('DATE & TIME',   occurred_at.strftime('%Y-%m-%d %H:%M:%S UTC')),
+            ('STATUS',        'OPEN — Awaiting review'),
+        ])}
+      </table>
+      <div style="background:#fff5f5;border:1px solid #fecaca;
+                  border-radius:6px;padding:16px;margin-bottom:16px;">
+        <p style="margin:0 0 8px;color:#dc2626;font-weight:700;font-size:14px;">
+          Incident Details:
+        </p>
+        <p style="margin:0;color:#7f1d1d;font-size:13px;">{details}</p>
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;
+                  border-radius:6px;padding:14px;">
+        <p style="margin:0 0 8px;color:#15803d;font-weight:700;font-size:14px;">
+          Recommended Response:
+        </p>
+        <ul style="margin:0;padding-left:20px;color:#166534;font-size:13px;">
+          <li>Review the affected user's login history and active sessions.</li>
+          <li>Verify whether the account is currently locked.</li>
+          <li>Escalate to Critical if further suspicious activity is detected.</li>
+          <li>Update incident status once investigated.</li>
+        </ul>
+      </div>
+    """
+
+    plain = f"""[SOC ALERT] {severity.upper()} — {incident_type.replace('_', ' ').title()} – HDS
+
+Incident Ref : {incident_ref}
+Severity     : {severity.upper()}
+Risk Score   : {risk_score}/100
+Affected User: {username}
+Source IP    : {source_ip}
+Date/Time    : {occurred_at.strftime('%Y-%m-%d %H:%M:%S UTC')}
+
+Details: {details}
+
+Action: Review login history for {username} and verify account lockout status.
+
+-- Hacking Detection System SOC (automated alert)
+"""
+
+    sent_any = False
+    for admin in admin_emails:
+        html = _wrap_html(color, f'&#128679; SOC Alert — {severity}', f'Incident {incident_ref}', body)
+        msg  = _base_msg(f'[HDS-SOC] [{severity.upper()}] {incident_type.replace("_"," ").title()} — {incident_ref}', admin)
+        msg.attach(MIMEText(plain, 'plain'))
+        msg.attach(MIMEText(html,  'html'))
+        if _smtp_send(msg):
+            sent_any = True
+    return sent_any

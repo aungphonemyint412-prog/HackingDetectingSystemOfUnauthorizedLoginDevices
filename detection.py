@@ -40,6 +40,7 @@ class SuspiciousLoginDetector:
 
         self._r5_unusual_hour()       # always check time
         self._r8_vpn_proxy()          # always check VPN flag
+        self._r9_bot_activity()       # always check user agent
 
         return bool(self.reasons), self.reasons
 
@@ -156,3 +157,22 @@ class SuspiciousLoginDetector:
             self.reasons.append(
                 'VPN / proxy / TOR exit node detected: login may be masking true location'
             )
+
+    _BOT_PATTERNS = [
+        'headlesschrome', 'phantomjs', 'selenium', 'webdriver',
+        'python-requests', 'python-urllib', 'curl/', 'wget/',
+        'scrapy', 'httpx', 'aiohttp', 'go-http-client',
+        'libwww-perl', 'lwp-trivial', 'java/1.',
+    ]
+
+    def _r9_bot_activity(self):
+        """Flag automated / scripted login attempts based on user-agent patterns."""
+        ua = (getattr(self.current, 'user_agent', '') or '').lower()
+        if not ua:
+            return
+        for pattern in self._BOT_PATTERNS:
+            if pattern in ua:
+                self.reasons.append(
+                    f'Automated client detected: user agent matches bot/script pattern ({pattern})'
+                )
+                return
