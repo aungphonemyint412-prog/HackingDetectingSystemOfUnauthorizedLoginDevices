@@ -5,6 +5,7 @@ Sends HTML + plain-text emails for security events.
 import smtplib
 import time
 import os
+import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
@@ -35,13 +36,13 @@ def _credentials() -> tuple[str, str]:
     return os.environ.get('MAIL_USERNAME', ''), os.environ.get('MAIL_PASSWORD', '')
 
 
-def _smtp_send(msg: MIMEMultipart, retries: int = 3) -> bool:
+def _smtp_send_blocking(msg: MIMEMultipart, retries: int = 3) -> bool:
     sender, app_pwd = _credentials()
     if not sender or not app_pwd:
         return False
     for attempt in range(retries):
         try:
-            with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as srv:
+            with smtplib.SMTP('smtp.gmail.com', 587, timeout=15) as srv:
                 srv.ehlo()
                 srv.starttls()
                 srv.login(sender, app_pwd)
@@ -52,6 +53,17 @@ def _smtp_send(msg: MIMEMultipart, retries: int = 3) -> bool:
             if attempt < retries - 1:
                 time.sleep(1)
     return False
+
+
+def _smtp_send(msg: MIMEMultipart, retries: int = 3) -> bool:
+    """Fire-and-forget: sends in a daemon thread so the request never blocks on SMTP."""
+    sender, app_pwd = _credentials()
+    if not sender or not app_pwd:
+        return False
+    msg_copy = msg  # MIMEMultipart is safe to pass across threads
+    t = threading.Thread(target=_smtp_send_blocking, args=(msg_copy, retries), daemon=True)
+    t.start()
+    return True  # optimistically report sent; errors are logged in the thread
 
 
 def _base_msg(subject: str, recipient: str) -> MIMEMultipart:
