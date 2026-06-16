@@ -5,7 +5,7 @@ from playwright.sync_api import sync_playwright
 
 BASE     = "https://hacking-detection-system-production.up.railway.app"
 USERNAME = f"railwayuser_{int(time.time())}"
-EMAIL    = "godofwarx1234@gmail.com"
+EMAIL    = f"godofwarx1234+{int(time.time())}@gmail.com"
 PASSWORD = "TestPass123!"
 
 # Railway MySQL public URL
