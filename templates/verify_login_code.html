@@ -10,11 +10,11 @@
       <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
     </div>
 
-    <h2 class="auth-title">Login Verification</h2>
+    <h2 class="auth-title">Verify Your Code</h2>
     <p class="auth-subtitle">
-      We sent a <strong>2-digit code</strong> to
+      A 2-digit code has been sent to
       <strong class="text-primary">{{ masked_email }}</strong>.
-      Enter it below to complete your login.
+      Choose the correct code below.
     </p>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -24,22 +24,22 @@
     {% endwith %}
 
     <form method="POST" action="{{ url_for('verify_login_code') }}" id="loginCodeForm">
-      <div class="mb-4">
-        <label class="form-label fw-semibold">Login Code</label>
-        <div class="d-flex gap-3 justify-content-center my-3">
-          <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]"
-                 class="code-box form-control text-center fw-bold"
-                 autocomplete="off" id="box0">
-          <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]"
-                 class="code-box form-control text-center fw-bold"
-                 autocomplete="off" id="box1">
-        </div>
-        <input type="hidden" name="login_code" id="codeHidden">
+      <input type="hidden" name="selected_code" id="selectedCode">
+
+      <div class="d-flex gap-3 justify-content-center my-4">
+        {% for opt in options %}
+        <button type="button"
+                class="option-btn"
+                data-value="{{ opt }}"
+                onclick="selectOption(this)">
+          {{ opt }}
+        </button>
+        {% endfor %}
       </div>
 
       <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold"
-              id="loginBtn" disabled>
-        <i class="fas fa-sign-in-alt me-2"></i>Complete Login
+              id="confirmBtn" disabled>
+        <i class="fas fa-check-circle me-2"></i>Confirm
       </button>
     </form>
 
@@ -61,28 +61,12 @@
 
 {% block scripts %}
 <script>
-const boxes  = [document.getElementById('box0'), document.getElementById('box1')];
-const hidden = document.getElementById('codeHidden');
-const btn    = document.getElementById('loginBtn');
-
-function update() {
-  const val = boxes.map(b => b.value).join('');
-  hidden.value = val;
-  btn.disabled = val.length < 2;
+function selectOption(btn) {
+  document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('selectedCode').value = btn.dataset.value;
+  document.getElementById('confirmBtn').disabled = false;
 }
-
-boxes.forEach((box, i) => {
-  box.addEventListener('input', () => {
-    box.value = box.value.replace(/\D/, '');
-    if (box.value && i < 1) boxes[i + 1].focus();
-    update();
-  });
-  box.addEventListener('keydown', e => {
-    if (e.key === 'Backspace' && !box.value && i > 0) {
-      boxes[i - 1].focus(); boxes[i - 1].value = ''; update();
-    }
-  });
-});
 
 let total = 5 * 60;
 const cdEl = document.getElementById('countdown');
@@ -92,26 +76,37 @@ const timer = setInterval(() => {
     clearInterval(timer);
     cdEl.textContent = 'Expired';
     cdEl.classList.replace('text-primary', 'text-danger');
-    btn.disabled = true;
-    btn.textContent = 'Code expired — please log in again';
+    document.getElementById('confirmBtn').disabled = true;
+    document.getElementById('confirmBtn').textContent = 'Code expired — please log in again';
   } else {
     const m = Math.floor(total / 60), s = total % 60;
     cdEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
     if (total <= 60) cdEl.classList.replace('text-primary', 'text-warning');
   }
 }, 1000);
-
-boxes[0].focus();
 </script>
 
 <style>
-.code-box {
-  width: 64px !important; height: 72px;
-  border-radius: 12px; border: 2px solid #e2e8f0;
+.option-btn {
+  width: 80px; height: 80px;
+  border-radius: 14px;
+  border: 2px solid #e2e8f0;
+  background: #fff;
   font-size: 2rem;
-  transition: border-color .15s, box-shadow .15s;
+  font-weight: 700;
+  color: #1e293b;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, background .15s, color .15s;
 }
-.code-box:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); outline: none; }
-.code-box:not(:placeholder-shown) { border-color: #16a34a; background: #f0fdf4; }
+.option-btn:hover {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.option-btn.selected {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #15803d;
+  box-shadow: 0 0 0 3px rgba(22,163,74,.18);
+}
 </style>
 {% endblock %}
