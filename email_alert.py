@@ -840,3 +840,114 @@ Action: Review login history for {username} and verify account lockout status.
         if _smtp_send(msg):
             sent_any = True
     return sent_any
+
+
+# ── Registration email verification ───────────────────────────────────────
+
+def send_email_verification_code(recipient: str, username: str, code: str) -> bool:
+    plain = f"""
+HDS — Verify Your Email Address
+================================
+
+Hello {username},
+
+Your email verification code is:
+
+  {code}
+
+Enter this 2-digit code on the verification page to complete your registration.
+The code expires in 10 minutes.
+
+If you did not register for HDS, ignore this email.
+
+-- Hacking Detection System (automated message)
+"""
+
+    body = f"""
+<p style="font-size:15px;color:#374151;">
+  Hello <strong>{username}</strong>,
+</p>
+<p style="font-size:15px;color:#374151;">
+  Enter the code below to verify your email address and complete registration.
+</p>
+
+<div style="text-align:center;margin:32px 0;">
+  <div style="display:inline-block;background:#16a34a;color:#fff;
+              border-radius:16px;padding:20px 48px;">
+    <div style="font-size:13px;letter-spacing:2px;text-transform:uppercase;
+                opacity:.8;margin-bottom:6px;">Verification Code</div>
+    <div style="font-size:56px;font-weight:900;letter-spacing:12px;
+                line-height:1;">{code}</div>
+    <div style="font-size:12px;opacity:.7;margin-top:8px;">Expires in 10 minutes</div>
+  </div>
+</div>
+
+<p style="font-size:13px;color:#6b7280;margin-top:24px;">
+  If you did not create an account, you can safely ignore this email.
+</p>
+"""
+
+    html = _wrap_html('#16a34a', '&#9989; Verify Your Email',
+                      'Complete your HDS registration', body)
+    msg  = _base_msg('[HDS] Email Verification Code', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)
+
+
+# ── Login 2-digit verification ─────────────────────────────────────────────
+
+def send_login_code_email(recipient: str, username: str, code: str, ip: str = '') -> bool:
+    plain = f"""
+HDS — Login Verification Code
+==============================
+
+Hello {username},
+
+Your login verification code is:
+
+  {code}
+
+Enter this 2-digit code to complete your login.
+The code expires in 5 minutes.
+
+  IP Address : {ip or 'Unknown'}
+
+If you did not attempt to log in, change your password immediately.
+
+-- Hacking Detection System (automated message)
+"""
+
+    body = f"""
+<p style="font-size:15px;color:#374151;">
+  Hello <strong>{username}</strong>,
+</p>
+<p style="font-size:15px;color:#374151;">
+  Enter the code below to complete your login.
+</p>
+
+<div style="text-align:center;margin:32px 0;">
+  <div style="display:inline-block;background:#2563eb;color:#fff;
+              border-radius:16px;padding:20px 48px;">
+    <div style="font-size:13px;letter-spacing:2px;text-transform:uppercase;
+                opacity:.8;margin-bottom:6px;">Login Code</div>
+    <div style="font-size:56px;font-weight:900;letter-spacing:12px;
+                line-height:1;">{code}</div>
+    <div style="font-size:12px;opacity:.7;margin-top:8px;">Expires in 5 minutes</div>
+  </div>
+</div>
+
+{_detail_rows_html([('IP Address', ip or 'Unknown')])}
+
+<p style="font-size:13px;color:#6b7280;margin-top:24px;">
+  If you did not attempt to log in,
+  <a href="#" style="color:#dc2626;">change your password immediately</a>.
+</p>
+"""
+
+    html = _wrap_html('#2563eb', '&#128272; Login Verification Code',
+                      'Enter this code to complete your login', body)
+    msg  = _base_msg('[HDS] Login Verification Code', recipient)
+    msg.attach(MIMEText(plain, 'plain'))
+    msg.attach(MIMEText(html,  'html'))
+    return _smtp_send(msg)

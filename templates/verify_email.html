@@ -1,0 +1,115 @@
+{% extends 'base.html' %}
+{% block title %}Verify Your Email – HDS{% endblock %}
+
+{% block content %}
+<div class="auth-page">
+  <div class="auth-card">
+
+    <div class="auth-brand">
+      <i class="fas fa-shield-halved text-primary"></i>
+      <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
+    </div>
+
+    <h2 class="auth-title">Verify Your Email</h2>
+    <p class="auth-subtitle">
+      We sent a <strong>2-digit code</strong> to
+      <strong class="text-primary">{{ masked_email }}</strong>.
+      Enter it below to complete your registration.
+    </p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} py-2">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="POST" action="{{ url_for('verify_email') }}" id="verifyForm">
+      <div class="mb-4">
+        <label class="form-label fw-semibold">Verification Code</label>
+        <div class="d-flex gap-3 justify-content-center my-3">
+          <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]"
+                 class="code-box form-control text-center fw-bold"
+                 autocomplete="off" id="box0">
+          <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]"
+                 class="code-box form-control text-center fw-bold"
+                 autocomplete="off" id="box1">
+        </div>
+        <input type="hidden" name="verify_code" id="codeHidden">
+      </div>
+
+      <button type="submit" class="btn btn-success w-100 py-2 fw-semibold"
+              id="verifyBtn" disabled>
+        <i class="fas fa-check-circle me-2"></i>Verify Email
+      </button>
+    </form>
+
+    <div class="text-center mt-3">
+      <small class="text-muted">
+        Code expires in <span id="countdown" class="fw-semibold text-success">10:00</span>
+      </small>
+    </div>
+
+    <p class="text-center mt-3 text-muted small">
+      <a href="{{ url_for('register') }}" class="auth-link">
+        <i class="fas fa-arrow-left me-1"></i>Back to register
+      </a>
+    </p>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const boxes  = [document.getElementById('box0'), document.getElementById('box1')];
+const hidden = document.getElementById('codeHidden');
+const btn    = document.getElementById('verifyBtn');
+
+function update() {
+  const val = boxes.map(b => b.value).join('');
+  hidden.value = val;
+  btn.disabled = val.length < 2;
+}
+
+boxes.forEach((box, i) => {
+  box.addEventListener('input', () => {
+    box.value = box.value.replace(/\D/, '');
+    if (box.value && i < 1) boxes[i + 1].focus();
+    update();
+  });
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Backspace' && !box.value && i > 0) {
+      boxes[i - 1].focus(); boxes[i - 1].value = ''; update();
+    }
+  });
+});
+
+let total = 10 * 60;
+const cdEl = document.getElementById('countdown');
+const timer = setInterval(() => {
+  total--;
+  if (total <= 0) {
+    clearInterval(timer);
+    cdEl.textContent = 'Expired';
+    cdEl.classList.replace('text-success', 'text-danger');
+    btn.disabled = true;
+  } else {
+    const m = Math.floor(total / 60), s = total % 60;
+    cdEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+  }
+}, 1000);
+
+boxes[0].focus();
+</script>
+
+<style>
+.code-box {
+  width: 64px !important; height: 72px;
+  border-radius: 12px; border: 2px solid #e2e8f0;
+  font-size: 2rem;
+  transition: border-color .15s, box-shadow .15s;
+}
+.code-box:focus { border-color: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.15); outline: none; }
+.code-box:not(:placeholder-shown) { border-color: #16a34a; background: #f0fdf4; }
+</style>
+{% endblock %}

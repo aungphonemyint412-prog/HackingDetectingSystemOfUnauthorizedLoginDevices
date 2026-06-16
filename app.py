@@ -37,6 +37,8 @@ from email_alert import (
     send_2fa_recovery_email,
     send_account_locked_email,
     send_soc_admin_email,
+    send_email_verification_code,
+    send_login_code_email,
 )
 
 # ── Allow HTTP for OAuth in dev (remove in production) ─────────────────────
@@ -654,6 +656,26 @@ def register():
         db.session.add(user)
         db.session.commit()
 
+        # Send 2-digit email verification code (skip in test mode)
+        if not app.config.get('TESTING', False):
+            code = str(secrets.randbelow(90) + 10)  # 10–99
+            otp  = OTPCode(
+                user_id    = user.id,
+                code       = code,
+                expires_at = datetime.utcnow() + timedelta(minutes=10),
+            )
+            db.session.add(otp)
+            db.session.commit()
+            flask_session['pending_email_verify_user_id'] = user.id
+            flask_session['pending_email_verify_otp_id']  = otp.id
+            send_email_verification_code(user.email, user.username, code)
+            flash(
+                f'A 2-digit verification code has been sent to {user.email}. '
+                'Enter it to complete your registration.',
+                'info',
+            )
+            return redirect(url_for('verify_email'))
+
         flask_session['pending_gmail_link_user_id'] = user.id
         return redirect(url_for('link_gmail'))
 
@@ -699,6 +721,28 @@ def login():
                 return render_template('login.html')
 
         if user and user.check_password(password):
+            # ── Mandatory 2-digit login code (always, unless in test mode) ─
+            if not app.config.get('TESTING', False):
+                code = str(secrets.randbelow(90) + 10)  # 10–99
+                otp  = OTPCode(
+                    user_id          = user.id,
+                    code             = code,
+                    expires_at       = datetime.utcnow() + timedelta(minutes=5),
+                    ip_address       = ip,
+                )
+                db.session.add(otp)
+                db.session.commit()
+                flask_session['pending_login_code_user_id'] = user.id
+                flask_session['pending_login_code_otp_id']  = otp.id
+                send_login_code_email(user.email, user.username, code, ip)
+                flash(
+                    f'A 2-digit login code has been sent to {mask_email(user.email)}. '
+                    'Enter it to complete your login.',
+                    'info',
+                )
+                return redirect(url_for('verify_login_code'))
+            # ── End mandatory login code ────────────────────────────────────
+
             if user.two_fa_enabled:
                 record = _record_login(user, 'pending_2fa', ua, ip, ua_raw,
                                        two_fa_required=True)
@@ -928,6 +972,84 @@ def verify_2fa():
     return render_template('verify_2fa.html',
                            masked_email=mask_email(user.email),
                            username=user.username)
+
+
+# ── Email verification (registration) ─────────────────────────────────────
+@app.route('/verify-email', methods=['GET', 'POST'])
+def verify_email():
+    user_id = flask_session.get('pending_email_verify_user_id')
+    otp_id  = flask_session.get('pending_email_verify_otp_id')
+    if not user_id or not otp_id:
+        return redirect(url_for('register'))
+
+    user = db.session.get(User, user_id)
+    otp  = db.session.get(OTPCode, otp_id)
+    if not user or not otp or otp.is_used or otp.is_expired:
+        flask_session.pop('pending_email_verify_user_id', None)
+        flask_session.pop('pending_email_verify_otp_id', None)
+        flash('Verification code expired. Please register again.', 'danger')
+        return redirect(url_for('register'))
+
+    if request.method == 'POST':
+        entered = request.form.get('verify_code', '').strip()
+        if entered == otp.code:
+            otp.is_used             = True
+            user.email_verified     = True
+            db.session.commit()
+            flask_session.pop('pending_email_verify_user_id', None)
+            flask_session.pop('pending_email_verify_otp_id', None)
+            flask_session['pending_gmail_link_user_id'] = user.id
+            flash('Email verified! Your account is ready.', 'success')
+            return redirect(url_for('link_gmail'))
+        else:
+            flash('Incorrect code. Please try again.', 'danger')
+
+    return render_template('verify_email.html', masked_email=mask_email(user.email))
+
+
+# ── Login 2-digit code verification ───────────────────────────────────────
+@app.route('/verify-login-code', methods=['GET', 'POST'])
+def verify_login_code():
+    user_id = flask_session.get('pending_login_code_user_id')
+    otp_id  = flask_session.get('pending_login_code_otp_id')
+    if not user_id or not otp_id:
+        return redirect(url_for('login'))
+
+    user = db.session.get(User, user_id)
+    otp  = db.session.get(OTPCode, otp_id)
+    if not user or not otp or otp.is_used or otp.is_expired:
+        flask_session.pop('pending_login_code_user_id', None)
+        flask_session.pop('pending_login_code_otp_id', None)
+        flash('Login code expired. Please log in again.', 'danger')
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        entered = request.form.get('login_code', '').strip()
+        if entered == otp.code:
+            otp.is_used = True
+            ip     = get_client_ip()
+            ua_raw = request.headers.get('User-Agent', '')
+            ua     = parse_user_agent(ua_raw)
+            geo    = get_geo_data(ip)
+            record = _record_login(user, 'success', ua, ip, ua_raw, geo=geo)
+            db.session.flush()
+            is_susp = _run_detection_and_commit(user, record, ip, ua)
+            update_known_ip(user.id, ip)
+            update_known_device(user.id, ua_raw, ua)
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+            flask_session.pop('pending_login_code_user_id', None)
+            flask_session.pop('pending_login_code_otp_id', None)
+            login_user(user, remember=False)
+            if is_susp:
+                flash('Login successful — suspicious activity detected.', 'warning')
+            else:
+                flash('Welcome back!', 'success')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Incorrect code. Please try again.', 'danger')
+
+    return render_template('verify_login_code.html', masked_email=mask_email(user.email))
 
 
 # ── Resend OTP ────────────────────────────────────────────────────────────
