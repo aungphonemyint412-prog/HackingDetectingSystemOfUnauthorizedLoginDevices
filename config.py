@@ -8,7 +8,7 @@ load_dotenv()
 class Config:
     # ── Flask ──────────────────────────────────────────────────────────────
     SECRET_KEY = os.environ.get('SECRET_KEY', 'hds-dev-secret-key-2024')
-    PERMANENT_SESSION_LIFETIME = timedelta(hours=2)
+    PERMANENT_SESSION_LIFETIME = timedelta(minutes=30)
 
     # ── Database ───────────────────────────────────────────────────────────
     SQLALCHEMY_DATABASE_URI = os.environ.get(

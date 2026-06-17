@@ -176,6 +176,11 @@ def load_user(user_id: str):
     return User.query.get(int(user_id))
 
 
+@app.before_request
+def make_session_permanent():
+    flask_session.permanent = True
+
+
 # ── Context processor ─────────────────────────────────────────────────────
 @app.context_processor
 def inject_globals():
