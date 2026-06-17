@@ -1065,7 +1065,8 @@ def verify_login_code():
 
     return render_template('verify_login_code.html',
                            masked_email=mask_email(user.email),
-                           options=options)
+                           options=options,
+                           ip_address=get_client_ip())
 
 
 # ── Resend OTP ────────────────────────────────────────────────────────────

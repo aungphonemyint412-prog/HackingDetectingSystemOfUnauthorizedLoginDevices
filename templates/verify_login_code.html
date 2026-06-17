@@ -17,6 +17,13 @@
       Choose the correct code below.
     </p>
 
+    <div class="ip-info-box mb-3">
+      <i class="fas fa-network-wired me-2 text-secondary"></i>
+      <span class="text-muted small">Login attempt from IP: </span>
+      <strong class="small text-dark font-monospace">{{ ip_address }}</strong>
+      <span class="text-muted small ms-2">— If this wasn't you, ignore this code.</span>
+    </div>
+
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
         <div class="alert alert-{{ category }} py-2">{{ message }}</div>
@@ -87,6 +94,13 @@ const timer = setInterval(() => {
 </script>
 
 <style>
+.ip-info-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  text-align: center;
+}
 .option-btn {
   width: 80px; height: 80px;
   border-radius: 14px;
