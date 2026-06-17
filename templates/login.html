@@ -40,6 +40,11 @@
         </div>
       </div>
 
+      <div class="ip-badge mb-3">
+        <i class="fas fa-network-wired me-1"></i>
+        Your IP: <strong class="font-monospace">{{ client_ip }}</strong>
+      </div>
+
       <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">
         <i class="fas fa-right-to-bracket me-2"></i>Sign In
       </button>
@@ -78,6 +83,18 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+.ip-badge {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: #64748b;
+  text-align: center;
+}
+.ip-badge strong { color: #1e293b; }
+</style>
 <script>
   document.getElementById('togglePwd').addEventListener('click', function () {
     const pwd  = document.getElementById('password');

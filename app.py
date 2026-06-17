@@ -723,7 +723,7 @@ def login():
                         'Use "Forgot password?" to unlock.',
                         'danger',
                     )
-                return render_template('login.html')
+                return render_template('login.html', client_ip=get_client_ip())
 
         if user and user.check_password(password):
             # ── Mandatory 2-digit login code (always, unless in test mode) ─
@@ -893,7 +893,7 @@ def login():
 
             flash('Invalid username or password.', 'danger')
 
-    return render_template('login.html')
+    return render_template('login.html', client_ip=get_client_ip())
 
 
 # ── Verify 2FA ────────────────────────────────────────────────────────────
