@@ -1047,9 +1047,18 @@ def verify_login_code():
             flask_session.pop('pending_login_code_otp_id', None)
             login_user(user, remember=False)
             if is_susp:
-                flash('Login successful — suspicious activity detected.', 'warning')
+                flash('Login successful — suspicious activity detected. '
+                      f'A security alert has been sent to {user.email}.', 'warning')
             else:
                 flash('Welcome back!', 'success')
+                if not app.config.get('TESTING', False):
+                    try:
+                        send_login_notification_email(
+                            user.email, user.username, ip,
+                            geo.get('location', ''), ua, datetime.utcnow(),
+                        )
+                    except Exception:
+                        pass
             return redirect(url_for('dashboard'))
         else:
             flash('Wrong code selected. Please try again.', 'danger')
