@@ -78,9 +78,12 @@
         <input type="hidden" name="email" id="selectedEmail" value="{{ google_users[0].email }}">
 
         <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold mb-2"
-                id="continueBtn">
+                id="continueBtn" disabled>
           <i class="fas fa-right-to-bracket me-2"></i>Continue with Google
         </button>
+        <p class="text-center text-muted small" id="confirmHint">
+          <i class="fas fa-info-circle me-1"></i>Check the confirmation box above to continue.
+        </p>
       </form>
 
       <hr class="my-3">
@@ -156,8 +159,11 @@ function selectAccount(idx, email) {
 }
 
 function toggleConfirm(idx) {
-  const cb = document.getElementById('confirmbox_' + idx);
-  document.getElementById('continueBtn').disabled = !cb.checked;
+  const cb   = document.getElementById('confirmbox_' + idx);
+  const btn  = document.getElementById('continueBtn');
+  const hint = document.getElementById('confirmHint');
+  btn.disabled = !cb.checked;
+  if (hint) hint.style.display = cb.checked ? 'none' : '';
 }
 
 // Select first account on load
@@ -165,9 +171,10 @@ window.addEventListener('DOMContentLoaded', () => {
   if (totalUsers > 0) {
     const firstEmail = document.getElementById('selectedEmail').value;
     selectAccount(1, firstEmail);
-    // If only one account, enable button immediately
     if (totalUsers === 1) {
       document.getElementById('continueBtn').disabled = false;
+      const hint = document.getElementById('confirmHint');
+      if (hint) hint.style.display = 'none';
     }
   }
 });

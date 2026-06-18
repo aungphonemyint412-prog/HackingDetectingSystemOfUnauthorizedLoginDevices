@@ -681,8 +681,8 @@ def register():
             )
             return redirect(url_for('verify_email'))
 
-        flask_session['pending_gmail_link_user_id'] = user.id
-        return redirect(url_for('link_gmail'))
+        flash('Account created! Please log in.', 'success')
+        return redirect(url_for('login'))
 
     return render_template('register.html')
 
@@ -1003,9 +1003,8 @@ def verify_email():
             db.session.commit()
             flask_session.pop('pending_email_verify_user_id', None)
             flask_session.pop('pending_email_verify_otp_id', None)
-            flask_session['pending_gmail_link_user_id'] = user.id
-            flash('Email verified! Your account is ready.', 'success')
-            return redirect(url_for('link_gmail'))
+            flash('Email verified! Your account is ready. Please log in.', 'success')
+            return redirect(url_for('login'))
         else:
             flash('Incorrect code. Please try again.', 'danger')
 
@@ -1532,10 +1531,13 @@ def simulate():
     elif scenario == 'test_email':
         ip = get_client_ip(); ua_raw = request.headers.get('User-Agent', '')
         ua = parse_user_agent(ua_raw)
-        sent = send_alert_email(user.email, user.username, ip, ua,
-                                ['Test alert from HDS Testing Panel'], now)
-        flash(f'Test email {"sent to " + user.email if sent else "failed — check MAIL settings in .env"}.',
-              'success' if sent else 'danger')
+        all_users = User.query.filter_by(email_verified=True).all()
+        results = []
+        for u in all_users:
+            sent = send_alert_email(u.email, u.username, ip, ua,
+                                    ['Test alert from HDS Testing Panel'], now)
+            results.append(f'{u.email} ({"✓" if sent else "✗"})')
+        flash(f'Test alert sent to all accounts: {", ".join(results)}', 'success')
 
     elif scenario == 'test_otp_email':
         code = generate_otp()
