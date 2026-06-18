@@ -359,7 +359,7 @@ This code expires in {expires_minutes} minutes and can only be used once.
     msg  = _base_msg(subject_line, recipient)
     msg.attach(MIMEText(plain, 'plain'))
     msg.attach(MIMEText(html,  'html'))
-    return _smtp_send(msg)
+    return _smtp_send_blocking(msg)
 
 
 # ── Login notification email ───────────────────────────────────────────────
@@ -892,7 +892,7 @@ If you did not register for HDS, ignore this email.
     msg  = _base_msg('[HDS] Email Verification Code', recipient)
     msg.attach(MIMEText(plain, 'plain'))
     msg.attach(MIMEText(html,  'html'))
-    return _smtp_send(msg)
+    return _smtp_send_blocking(msg)
 
 
 # ── Login 2-digit verification ─────────────────────────────────────────────
@@ -950,4 +950,4 @@ If you did not attempt to log in, change your password immediately.
     msg  = _base_msg('[HDS] Login Verification Code', recipient)
     msg.attach(MIMEText(plain, 'plain'))
     msg.attach(MIMEText(html,  'html'))
-    return _smtp_send(msg)
+    return _smtp_send_blocking(msg)
