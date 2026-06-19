@@ -1225,6 +1225,90 @@ def reset_password():
     return render_template('reset_password.html', username=user.username)
 
 
+# ── Forgot Password JSON API (single-page login flow) ─────────────────────
+@app.route('/api/send-reset-code', methods=['POST'])
+def api_send_reset_code():
+    data  = request.get_json(silent=True) or {}
+    email = data.get('email', '').strip().lower()
+    user  = User.query.filter_by(email=email).first()
+
+    if not user or not user.password_hash:
+        return jsonify({'status': 'error', 'message': 'email_not_found'})
+
+    ip   = get_client_ip()
+    code = generate_otp()
+    otp  = OTPCode(
+        user_id    = user.id,
+        code       = code,
+        expires_at = datetime.utcnow() + timedelta(minutes=10),
+        ip_address = ip,
+    )
+    db.session.add(otp)
+    db.session.commit()
+
+    flask_session['pending_reset_user_id'] = user.id
+    flask_session['pending_reset_otp_id']  = otp.id
+
+    sent = send_otp_email(user.email, user.username, code, expires_minutes=10, purpose='reset')
+    if not sent:
+        return jsonify({'status': 'error', 'message': 'email_send_failed'})
+
+    return jsonify({'status': 'success'})
+
+
+@app.route('/api/verify-reset-code', methods=['POST'])
+def api_verify_reset_code():
+    data    = request.get_json(silent=True) or {}
+    entered = data.get('otp', '').strip().replace(' ', '')
+    user_id = flask_session.get('pending_reset_user_id')
+    otp_id  = flask_session.get('pending_reset_otp_id')
+
+    if not user_id or not otp_id:
+        return jsonify({'status': 'error', 'message': 'session_expired'})
+
+    otp = OTPCode.query.get(otp_id)
+
+    if otp and otp.is_expired:
+        flask_session.pop('pending_reset_user_id', None)
+        flask_session.pop('pending_reset_otp_id', None)
+        return jsonify({'status': 'error', 'message': 'otp_expired'})
+
+    if otp and not otp.is_used and not otp.is_expired and otp.code == entered:
+        otp.is_used = True
+        db.session.commit()
+        flask_session['reset_verified'] = True
+        return jsonify({'status': 'success'})
+
+    return jsonify({'status': 'error', 'message': 'invalid_otp'})
+
+
+@app.route('/api/reset-password', methods=['POST'])
+def api_reset_password():
+    if not flask_session.get('reset_verified'):
+        return jsonify({'status': 'error', 'message': 'not_verified'})
+
+    data         = request.get_json(silent=True) or {}
+    new_password = data.get('new_password', '')
+    user_id      = flask_session.get('pending_reset_user_id')
+    user         = User.query.get(user_id) if user_id else None
+
+    if not user:
+        return jsonify({'status': 'error', 'message': 'session_expired'})
+    if len(new_password) < 8:
+        return jsonify({'status': 'error', 'message': 'too_short'})
+
+    user.set_password(new_password)
+    user.is_locked    = False
+    user.locked_until = None
+    user.lock_reason  = None
+    db.session.commit()
+
+    for k in ('pending_reset_user_id', 'pending_reset_otp_id', 'reset_verified'):
+        flask_session.pop(k, None)
+
+    return jsonify({'status': 'success'})
+
+
 # ── Security confirm/deny (Was this you?) ─────────────────────────────────
 @app.route('/security/confirm/<token>')
 def security_confirm(token: str):
