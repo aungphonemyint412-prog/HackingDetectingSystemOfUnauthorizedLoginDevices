@@ -24,12 +24,6 @@
       <span class="text-muted small ms-2">— If this wasn't you, ignore this code.</span>
     </div>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for category, message in messages %}
-        <div class="alert alert-{{ category }} py-2">{{ message }}</div>
-      {% endfor %}
-    {% endwith %}
-
     <form method="POST" action="{{ url_for('verify_login_code') }}" id="loginCodeForm">
       <input type="hidden" name="selected_code" id="selectedCode">
 

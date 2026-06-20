@@ -17,12 +17,6 @@
       Enter it below to complete your registration.
     </p>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for category, message in messages %}
-        <div class="alert alert-{{ category }} py-2">{{ message }}</div>
-      {% endfor %}
-    {% endwith %}
-
     <form method="POST" action="{{ url_for('verify_email') }}" id="verifyForm">
       <div class="mb-4">
         <label class="form-label fw-semibold">Verification Code</label>

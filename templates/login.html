@@ -116,20 +116,55 @@
         }
         .topbar-link:hover { color: var(--blue); }
 
-        /* ── Flash Banners ── */
-        .flash-zone { position: relative; z-index: 10; }
-        .flash-item {
+        /* ── Centered Notification Overlay ── */
+        #hds-notif-layer {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10000;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+            min-width: 300px;
+            max-width: 500px;
+        }
+        .hds-notif {
+            pointer-events: auto;
             display: flex;
             align-items: center;
-            gap: 0.6rem;
-            padding: 0.7rem 2.5rem;
-            font-size: 0.82rem;
+            gap: 12px;
+            width: 100%;
+            padding: 14px 18px;
+            border-radius: 12px;
+            font-size: .92rem;
             font-weight: 500;
+            box-shadow: 0 8px 32px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.06);
+            animation: hdsIn .25s cubic-bezier(.34,1.56,.64,1) both;
         }
-        .flash-item.success { background: #f0fdf4; color: #15803d; border-bottom: 1px solid #bbf7d0; }
-        .flash-item.danger  { background: #fef2f2; color: #dc2626; border-bottom: 1px solid #fecaca; }
-        .flash-item.info    { background: #eff6ff; color: #1d4ed8; border-bottom: 1px solid #bfdbfe; }
-        .flash-item.warning { background: #fffbeb; color: #b45309; border-bottom: 1px solid #fde68a; }
+        @keyframes hdsIn {
+            from { opacity: 0; transform: scale(.9) translateY(10px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .hds-notif-close {
+            margin-left: auto;
+            flex-shrink: 0;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0 0 0 8px;
+            opacity: .55;
+            font-size: .9rem;
+            color: inherit;
+            line-height: 1;
+        }
+        .hds-notif-close:hover { opacity: 1; }
+        .hds-notif-success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+        .hds-notif-danger  { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+        .hds-notif-info    { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+        .hds-notif-warning { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
 
         /* ── Main Layout ── */
         .page-body {
@@ -192,22 +227,6 @@
             margin-bottom: 2rem;
             line-height: 1.55;
         }
-
-        /* ── Alert inside card ── */
-        .inner-alert {
-            display: none;
-            border-radius: var(--radius-sm);
-            padding: 0.7rem 1rem;
-            font-size: 0.82rem;
-            font-weight: 500;
-            margin-bottom: 1.5rem;
-            align-items: center;
-            gap: 0.55rem;
-        }
-        .inner-alert.show { display: flex; }
-        .inner-alert.err  { background: #fef2f2; color: var(--red); border: 1px solid #fecaca; }
-        .inner-alert.ok   { background: #f0fdf4; color: #16a34a;   border: 1px solid #bbf7d0; }
-        .inner-alert.inf  { background: var(--blue-light); color: var(--blue); border: 1px solid #bfdbfe; }
 
         /* ── Form fields ── */
         .field { margin-bottom: 1.25rem; }
@@ -451,28 +470,10 @@
         </a>
     </header>
 
-    <!-- ── Flask Flash Messages ── -->
-    <div class="flash-zone">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for category, message in messages %}
-        <div class="flash-item {{ category }}">
-            {% if category == 'success' %}<i class="fas fa-circle-check"></i>
-            {% elif category == 'danger' %}<i class="fas fa-circle-exclamation"></i>
-            {% elif category == 'warning' %}<i class="fas fa-triangle-exclamation"></i>
-            {% else %}<i class="fas fa-circle-info"></i>{% endif %}
-            {{ message }}
-        </div>
-        {% endfor %}
-        {% endwith %}
-    </div>
-
     <!-- ── Page Body ── -->
     <main class="page-body">
         <div class="card">
             <div class="card-inner">
-
-                <!-- Global inline alert -->
-                <div id="g-alert" class="inner-alert"></div>
 
                 <!-- ══════════════════════════════════
                      SECTION 1 · Sign In
@@ -684,17 +685,26 @@
             document.getElementById(id).classList.add('active');
         }
 
-        /* ── Alert ── */
+        /* ── Alert (centered overlay) ── */
         function alert(msg, type = 'err') {
-            const el = document.getElementById('g-alert');
-            const icons = { err: 'fa-circle-exclamation', ok: 'fa-circle-check', inf: 'fa-circle-info' };
-            el.className = 'inner-alert show ' + type;
-            el.innerHTML = `<i class="fas ${icons[type]}"></i><span>${msg}</span>`;
+            const typeMap = { err: 'danger', ok: 'success', inf: 'info' };
+            const iconMap = { danger: 'fa-circle-exclamation', success: 'fa-circle-check', info: 'fa-circle-info' };
+            const cat  = typeMap[type] || 'info';
+            const icon = iconMap[cat]  || 'fa-circle-info';
+            const el   = document.getElementById('g-alert');
+            el.className = `hds-notif hds-notif-${cat}`;
+            el.style.animation = 'none';
+            el.offsetHeight;
+            el.style.animation = '';
+            el.innerHTML = `<i class="fas ${icon}"></i><span>${msg}</span>
+                <button class="hds-notif-close" onclick="clearAlert()"><i class="fas fa-xmark"></i></button>`;
+            el.style.display = 'flex';
+            clearTimeout(el._t);
+            el._t = setTimeout(() => clearAlert(), 5000);
         }
         function clearAlert() {
             const el = document.getElementById('g-alert');
-            el.className = 'inner-alert';
-            el.innerHTML = '';
+            el.style.display = 'none';
         }
 
         /* ── Toggle password visibility ── */
@@ -852,6 +862,37 @@
             } catch {
                 alert('Network error. Please try again.');
             } finally { unspin(btn); }
+        });
+    </script>
+
+    <!-- ── Centered Notification Overlay ── -->
+    <div id="hds-notif-layer" aria-live="polite">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="hds-notif hds-notif-{{ category }}" data-auto>
+                {% if category == 'success' %}<i class="fas fa-circle-check"></i>
+                {% elif category == 'danger' %}<i class="fas fa-circle-exclamation"></i>
+                {% elif category == 'warning' %}<i class="fas fa-triangle-exclamation"></i>
+                {% else %}<i class="fas fa-circle-info"></i>{% endif %}
+                <span>{{ message }}</span>
+                <button class="hds-notif-close" onclick="this.closest('.hds-notif').remove()">
+                    <i class="fas fa-xmark"></i>
+                </button>
+            </div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+        <div id="g-alert" class="hds-notif" style="display:none;"></div>
+    </div>
+    <script>
+        document.querySelectorAll('#hds-notif-layer .hds-notif[data-auto]').forEach(el => {
+            setTimeout(() => {
+                el.style.transition = 'opacity .4s, transform .4s';
+                el.style.opacity = '0';
+                el.style.transform = 'scale(.9)';
+                setTimeout(() => el.remove(), 400);
+            }, 4500);
         });
     </script>
 
