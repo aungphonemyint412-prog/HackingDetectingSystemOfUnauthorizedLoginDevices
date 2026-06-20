@@ -1355,7 +1355,12 @@ def security_deny(token: str):
 @login_required
 def logout():
     logout_user()
-    flash('You have been logged out.', 'info')
+    flask_session.clear()
+    flash(
+        'You have been securely signed out. '
+        'Sign in again to access your account.',
+        'info',
+    )
     return redirect(url_for('login'))
 
 
