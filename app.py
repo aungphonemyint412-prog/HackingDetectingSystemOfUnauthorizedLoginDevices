@@ -1132,7 +1132,7 @@ def forgot_password():
         email = request.form.get('email', '').strip().lower()
         user  = User.query.filter_by(email=email).first()
 
-        if user and user.password_hash:
+        if user:
             ip   = get_client_ip()
             code = generate_otp()
             otp  = OTPCode(
@@ -1232,7 +1232,7 @@ def api_send_reset_code():
     email = data.get('email', '').strip().lower()
     user  = User.query.filter_by(email=email).first()
 
-    if not user or not user.password_hash:
+    if not user:
         return jsonify({'status': 'error', 'message': 'email_not_found'})
 
     ip   = get_client_ip()
@@ -1249,9 +1249,14 @@ def api_send_reset_code():
     flask_session['pending_reset_user_id'] = user.id
     flask_session['pending_reset_otp_id']  = otp.id
 
-    sent = send_otp_email(user.email, user.username, code, expires_minutes=10, purpose='reset')
-    if not sent:
-        return jsonify({'status': 'error', 'message': 'email_send_failed'})
+    # Send async (non-daemon thread) so AJAX returns immediately
+    import threading
+    threading.Thread(
+        target=send_otp_email,
+        args=(user.email, user.username, code),
+        kwargs={'expires_minutes': 10, 'purpose': 'reset'},
+        daemon=False,
+    ).start()
 
     return jsonify({'status': 'success'})
 
