@@ -4,6 +4,7 @@ Flask Application – Main entry point
 """
 import os
 import secrets
+import threading
 from datetime import datetime, timedelta
 
 from flask import (
@@ -673,7 +674,11 @@ def register():
             db.session.commit()
             flask_session['pending_email_verify_user_id'] = user.id
             flask_session['pending_email_verify_otp_id']  = otp.id
-            send_email_verification_code(user.email, user.username, code)
+            threading.Thread(
+                target=send_email_verification_code,
+                args=(user.email, user.username, code),
+                daemon=False,
+            ).start()
             flash(
                 f'A 2-digit verification code has been sent to {user.email}. '
                 'Enter it to complete your registration.',
@@ -739,7 +744,11 @@ def login():
                 db.session.commit()
                 flask_session['pending_login_code_user_id'] = user.id
                 flask_session['pending_login_code_otp_id']  = otp.id
-                send_login_code_email(user.email, user.username, code, ip)
+                threading.Thread(
+                    target=send_login_code_email,
+                    args=(user.email, user.username, code, ip),
+                    daemon=False,
+                ).start()
                 flash(
                     f'A 2-digit login code has been sent to {mask_email(user.email)}. '
                     'Enter it to complete your login.',
@@ -1250,7 +1259,6 @@ def api_send_reset_code():
     flask_session['pending_reset_otp_id']  = otp.id
 
     # Send async (non-daemon thread) so AJAX returns immediately
-    import threading
     threading.Thread(
         target=send_otp_email,
         args=(user.email, user.username, code),
