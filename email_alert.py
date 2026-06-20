@@ -56,14 +56,14 @@ def _smtp_send_blocking(msg: MIMEMultipart, retries: int = 3) -> bool:
 
 
 def _smtp_send(msg: MIMEMultipart, retries: int = 3) -> bool:
-    """Fire-and-forget: sends in a daemon thread so the request never blocks on SMTP."""
+    """Fire-and-forget: sends in a background thread without blocking the response.
+    Uses daemon=False so Railway containers don't kill the thread before SMTP completes."""
     sender, app_pwd = _credentials()
     if not sender or not app_pwd:
         return False
-    msg_copy = msg  # MIMEMultipart is safe to pass across threads
-    t = threading.Thread(target=_smtp_send_blocking, args=(msg_copy, retries), daemon=True)
+    t = threading.Thread(target=_smtp_send_blocking, args=(msg, retries), daemon=False)
     t.start()
-    return True  # optimistically report sent; errors are logged in the thread
+    return True
 
 
 def _base_msg(subject: str, recipient: str) -> MIMEMultipart:
