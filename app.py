@@ -1043,7 +1043,7 @@ def verify_login_code():
         return redirect(url_for('login'))
 
     if request.method == 'POST':
-        entered = request.form.get('selected_code', '').strip()
+        entered = request.form.get('selected_code', '').strip().replace(' ', '')
         if entered == otp.code:
             otp.is_used = True
             ip     = get_client_ip()
@@ -1074,20 +1074,10 @@ def verify_login_code():
                     ).start()
             return redirect(url_for('dashboard'))
         else:
-            flash('Wrong code selected. Please try again.', 'danger')
-
-    # Build 3 options: 1 correct + 2 random wrong ones, shuffled
-    wrong = set()
-    while len(wrong) < 2:
-        c = str(secrets.randbelow(90) + 10)
-        if c != otp.code:
-            wrong.add(c)
-    options = [otp.code] + list(wrong)
-    secrets.SystemRandom().shuffle(options)
+            flash('Incorrect code. Please check your email and try again.', 'danger')
 
     return render_template('verify_login_code.html',
                            masked_email=mask_email(user.email),
-                           options=options,
                            ip_address=get_client_ip())
 
 

@@ -10,14 +10,14 @@
       <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
     </div>
 
-    <h2 class="auth-title">Verify Your Code</h2>
+    <h2 class="auth-title">Verify Your Login</h2>
     <p class="auth-subtitle">
-      A 2-digit code has been sent to
+      A 2-digit security code was sent to
       <strong class="text-primary">{{ masked_email }}</strong>.
-      Choose the correct code below.
+      Open your Gmail and enter the code below.
     </p>
 
-    <div class="ip-info-box mb-3">
+    <div class="ip-info-box mb-4">
       <i class="fas fa-network-wired me-2 text-secondary"></i>
       <span class="text-muted small">Login attempt from IP: </span>
       <strong class="small text-dark font-monospace">{{ ip_address }}</strong>
@@ -27,20 +27,23 @@
     <form method="POST" action="{{ url_for('verify_login_code') }}" id="loginCodeForm">
       <input type="hidden" name="selected_code" id="selectedCode">
 
-      <div class="d-flex gap-3 justify-content-center my-4">
-        {% for opt in options %}
-        <button type="button"
-                class="option-btn"
-                data-value="{{ opt }}"
-                onclick="selectOption(this)">
-          {{ opt }}
-        </button>
-        {% endfor %}
+      <div class="mb-4">
+        <label class="form-label fw-semibold text-center d-block mb-3">
+          <i class="fas fa-envelope-open-text me-2 text-primary"></i>Enter the 2-digit code from your email
+        </label>
+        <div class="d-flex gap-3 justify-content-center">
+          <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]"
+                 class="code-box form-control text-center fw-bold"
+                 autocomplete="off" id="box0" autofocus>
+          <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]"
+                 class="code-box form-control text-center fw-bold"
+                 autocomplete="off" id="box1">
+        </div>
       </div>
 
       <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold"
               id="confirmBtn" disabled>
-        <i class="fas fa-check-circle me-2"></i>Confirm
+        <i class="fas fa-check-circle me-2"></i>Verify &amp; Sign In
       </button>
     </form>
 
@@ -62,12 +65,28 @@
 
 {% block scripts %}
 <script>
-function selectOption(btn) {
-  document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
-  btn.classList.add('selected');
-  document.getElementById('selectedCode').value = btn.dataset.value;
-  document.getElementById('confirmBtn').disabled = false;
+const boxes  = [document.getElementById('box0'), document.getElementById('box1')];
+const hidden = document.getElementById('selectedCode');
+const btn    = document.getElementById('confirmBtn');
+
+function update() {
+  const val = boxes.map(b => b.value).join('');
+  hidden.value = val;
+  btn.disabled = val.length < 2;
 }
+
+boxes.forEach((box, i) => {
+  box.addEventListener('input', () => {
+    box.value = box.value.replace(/\D/, '');
+    if (box.value && i < 1) boxes[i + 1].focus();
+    update();
+  });
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Backspace' && !box.value && i > 0) {
+      boxes[i - 1].focus(); boxes[i - 1].value = ''; update();
+    }
+  });
+});
 
 let total = 5 * 60;
 const cdEl = document.getElementById('countdown');
@@ -77,8 +96,8 @@ const timer = setInterval(() => {
     clearInterval(timer);
     cdEl.textContent = 'Expired';
     cdEl.classList.replace('text-primary', 'text-danger');
-    document.getElementById('confirmBtn').disabled = true;
-    document.getElementById('confirmBtn').textContent = 'Code expired — please log in again';
+    btn.disabled = true;
+    btn.textContent = 'Code expired — please log in again';
   } else {
     const m = Math.floor(total / 60), s = total % 60;
     cdEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
@@ -95,26 +114,21 @@ const timer = setInterval(() => {
   padding: 10px 14px;
   text-align: center;
 }
-.option-btn {
-  width: 80px; height: 80px;
+.code-box {
+  width: 72px !important; height: 80px;
   border-radius: 14px;
   border: 2px solid #e2e8f0;
-  background: #fff;
-  font-size: 2rem;
-  font-weight: 700;
-  color: #1e293b;
-  cursor: pointer;
-  transition: border-color .15s, box-shadow .15s, background .15s, color .15s;
+  font-size: 2.2rem;
+  transition: border-color .15s, box-shadow .15s;
 }
-.option-btn:hover {
+.code-box:focus {
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+  outline: none;
 }
-.option-btn.selected {
-  border-color: #16a34a;
-  background: #f0fdf4;
-  color: #15803d;
-  box-shadow: 0 0 0 3px rgba(22,163,74,.18);
+.code-box:not(:placeholder-shown) {
+  border-color: #2563eb;
+  background: #eff6ff;
 }
 </style>
 {% endblock %}
