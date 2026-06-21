@@ -781,71 +781,17 @@ def login():
                     'info',
                 )
                 return redirect(url_for('verify_login_code'))
-            # ── End mandatory login code ────────────────────────────────────
-
-            if user.two_fa_enabled:
-                record = _record_login(user, 'pending_2fa', ua, ip, ua_raw,
-                                       two_fa_required=True)
-                db.session.flush()
-
-                code = generate_otp()
-                otp  = OTPCode(
-                    user_id          = user.id,
-                    code             = code,
-                    expires_at       = datetime.utcnow() + timedelta(minutes=5),
-                    ip_address       = ip,
-                    login_history_id = record.id,
-                )
-                db.session.add(otp)
-                db.session.commit()
-
-                flask_session['pending_2fa_user_id']      = user.id
-                flask_session['pending_2fa_login_rec_id'] = record.id
-                flask_session['pending_2fa_otp_id']       = otp.id
-
-                loc_2fa = record.location or ''
-                threading.Thread(
-                    target=send_otp_email,
-                    args=(user.email, user.username, code),
-                    kwargs={'ip_address': ip, 'location': loc_2fa, 'ua_info': ua},
-                    daemon=False,
-                ).start()
-                flash(
-                    f'A 6-digit verification code has been sent to '
-                    f'{mask_email(user.email)}. It expires in 5 minutes.',
-                    'info',
-                )
-                return redirect(url_for('verify_2fa'))
-
-            else:
-                geo    = get_geo_data(ip)
-                record = _record_login(user, 'success', ua, ip, ua_raw, geo=geo)
-                db.session.flush()
-                is_susp = _run_detection_and_commit(user, record, ip, ua)
-                update_known_ip(user.id, ip)
-                update_known_device(user.id, ua_raw, ua)
-                user.last_login = datetime.utcnow()
-                db.session.commit()
-                login_user(user, remember=False)
-
-                if is_susp:
-                    flash(
-                        'Login successful — suspicious activity detected. '
-                        f'A security alert has been sent to {user.email}.',
-                        'warning',
-                    )
-                else:
-                    flash('Welcome back!', 'success')
-                    if not app.config.get('TESTING', False):
-                        threading.Thread(
-                            target=send_login_notification_email,
-                            args=(user.email, user.username, ip,
-                                  geo['location'], ua, datetime.utcnow()),
-                            daemon=False,
-                        ).start()
-
-                next_page = request.args.get('next')
-                return redirect(next_page or url_for('dashboard'))
+            # ── TESTING mode only: skip email, log in directly ──────────────
+            geo    = get_geo_data(ip)
+            record = _record_login(user, 'success', ua, ip, ua_raw, geo=geo)
+            db.session.flush()
+            _run_detection_and_commit(user, record, ip, ua)
+            update_known_ip(user.id, ip)
+            update_known_device(user.id, ua_raw, ua)
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+            login_user(user, remember=False)
+            return redirect(url_for('dashboard'))
 
         else:
             if user:
