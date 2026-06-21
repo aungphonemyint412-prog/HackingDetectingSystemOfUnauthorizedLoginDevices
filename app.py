@@ -166,6 +166,12 @@ if _google_enabled:
                   f'An alert was sent to {user.email}.', 'warning')
         else:
             flash(f'Welcome, {user.username}!', 'success')
+            geo = get_geo_data(ip)
+            threading.Thread(
+                target=send_login_notification_email,
+                args=(user.email, user.username, ip, geo.get('location', ''), ua, datetime.utcnow()),
+                daemon=False,
+            ).start()
 
         return False  # don't store the OAuth token in the session
 else:
@@ -847,27 +853,26 @@ def login():
                     _lock_account(user, reason, lockout_min)
                     _fire_alert(user, record, [reason], ip, ua, alert_type='brute_force')
                     if not app.config.get('TESTING', False):
-                        try:
-                            send_account_locked_email(
-                                user.email, user.username, reason, user.locked_until
-                            )
-                            _log_email(user.id, user.email, 'account_locked',
-                                       '[HDS] Your account has been locked', True)
-                        except Exception:
-                            pass
+                        locked_until = user.locked_until
+                        threading.Thread(
+                            target=send_account_locked_email,
+                            args=(user.email, user.username, reason, locked_until),
+                            daemon=False,
+                        ).start()
+                        _log_email(user.id, user.email, 'account_locked',
+                                   '[HDS] Your account has been locked', True)
                 else:
                     # Single failed login notification (rate-limited)
                     if not app.config.get('TESTING', False):
                         if _can_send_email(user.id, 'failed_login'):
-                            try:
-                                loc  = (record.location or get_location(ip))
-                                sent = send_failed_login_email(
-                                    user.email, user.username, ip, loc, ua, datetime.utcnow()
-                                )
-                                _log_email(user.id, user.email, 'failed_login',
-                                           '[HDS] Failed login attempt on your account', sent)
-                            except Exception:
-                                pass
+                            loc = (record.location or get_location(ip))
+                            _log_email(user.id, user.email, 'failed_login',
+                                       '[HDS] Failed login attempt on your account', True)
+                            threading.Thread(
+                                target=send_failed_login_email,
+                                args=(user.email, user.username, ip, loc, ua, datetime.utcnow()),
+                                daemon=False,
+                            ).start()
                         else:
                             _log_skipped_email(user.id, user.email, 'failed_login',
                                                '[HDS] Failed login attempt on your account')
@@ -1116,14 +1121,14 @@ def resend_otp():
     db.session.commit()
     flask_session['pending_2fa_otp_id'] = otp.id
 
-    sent = send_otp_email(
-        user.email, user.username, code,
-        ip_address=ip, location=get_location(ip), ua_info=ua,
-    )
-    if sent:
-        flash(f'A new code has been sent to {mask_email(user.email)}.', 'info')
-    else:
-        flash('Could not send email. Check MAIL settings.', 'danger')
+    loc = get_location(ip)
+    threading.Thread(
+        target=send_otp_email,
+        args=(user.email, user.username, code),
+        kwargs={'ip_address': ip, 'location': loc, 'ua_info': ua},
+        daemon=False,
+    ).start()
+    flash(f'A new code has been sent to {mask_email(user.email)}.', 'info')
 
     return redirect(url_for('verify_2fa'))
 
@@ -1153,10 +1158,12 @@ def forgot_password():
             flask_session['pending_reset_user_id'] = user.id
             flask_session['pending_reset_otp_id']  = otp.id
 
-            send_otp_email(
-                user.email, user.username, code,
-                expires_minutes=10, purpose='reset',
-            )
+            threading.Thread(
+                target=send_otp_email,
+                args=(user.email, user.username, code),
+                kwargs={'expires_minutes': 10, 'purpose': 'reset'},
+                daemon=False,
+            ).start()
 
         # Always show the same message so we don't leak whether the email exists
         flash('If that email is registered, a reset code has been sent.', 'info')
@@ -1225,6 +1232,14 @@ def reset_password():
             db.session.commit()
             for k in ('pending_reset_user_id', 'pending_reset_otp_id', 'reset_verified'):
                 flask_session.pop(k, None)
+            ip  = get_client_ip()
+            loc = get_location(ip)
+            now = datetime.utcnow()
+            threading.Thread(
+                target=send_password_changed_email,
+                args=(user.email, user.username, ip, loc, now),
+                daemon=False,
+            ).start()
             flash('Password reset successfully. Please log in with your new password.', 'success')
             return redirect(url_for('login'))
 
@@ -1316,6 +1331,15 @@ def api_reset_password():
     for k in ('pending_reset_user_id', 'pending_reset_otp_id', 'reset_verified'):
         flask_session.pop(k, None)
 
+    ip  = get_client_ip()
+    loc = get_location(ip)
+    now = datetime.utcnow()
+    threading.Thread(
+        target=send_password_changed_email,
+        args=(user.email, user.username, ip, loc, now),
+        daemon=False,
+    ).start()
+
     return jsonify({'status': 'success'})
 
 
@@ -1346,12 +1370,15 @@ def security_deny(token: str):
     user = User.query.get(tok.user_id)
     if user:
         _lock_account(user, 'Account locked by user: suspicious login denied via email link')
+        db.session.commit()
         if not app.config.get('TESTING', False):
-            try:
-                send_account_locked_email(user.email, user.username, 'Suspicious login denied by account owner')
-            except Exception:
-                pass
-    db.session.commit()
+            threading.Thread(
+                target=send_account_locked_email,
+                args=(user.email, user.username, 'Suspicious login denied by account owner'),
+                daemon=False,
+            ).start()
+    else:
+        db.session.commit()
     flash(
         'Your account has been secured and locked. '
         'Use "Forgot password?" to reset your password and regain access.',
@@ -1477,13 +1504,12 @@ def profile():
                     db.session.commit()
                     flash('Email address updated.', 'success')
                     if not app.config.get('TESTING', False):
-                        try:
-                            send_email_changed_email(
-                                new_email, current_user.username,
-                                old_email, new_email, ip, location, now,
-                            )
-                        except Exception:
-                            pass
+                        threading.Thread(
+                            target=send_email_changed_email,
+                            args=(new_email, current_user.username,
+                                  old_email, new_email, ip, location, now),
+                            daemon=False,
+                        ).start()
             else:
                 db.session.commit()
 
@@ -1499,36 +1525,33 @@ def profile():
                 db.session.commit()
                 flash('Password updated successfully.', 'success')
                 if not app.config.get('TESTING', False):
-                    try:
-                        send_password_changed_email(
-                            current_user.email, current_user.username, ip, location, now
-                        )
-                    except Exception:
-                        pass
+                    threading.Thread(
+                        target=send_password_changed_email,
+                        args=(current_user.email, current_user.username, ip, location, now),
+                        daemon=False,
+                    ).start()
 
         elif action == 'enable_2fa':
             current_user.two_fa_enabled = True
             db.session.commit()
             flash('Two-Factor Authentication enabled. Your login will now require an email code.', 'success')
             if not app.config.get('TESTING', False):
-                try:
-                    send_2fa_changed_email(
-                        current_user.email, current_user.username, True, ip, location, now
-                    )
-                except Exception:
-                    pass
+                threading.Thread(
+                    target=send_2fa_changed_email,
+                    args=(current_user.email, current_user.username, True, ip, location, now),
+                    daemon=False,
+                ).start()
 
         elif action == 'disable_2fa':
             current_user.two_fa_enabled = False
             db.session.commit()
             flash('Two-Factor Authentication disabled.', 'info')
             if not app.config.get('TESTING', False):
-                try:
-                    send_2fa_changed_email(
-                        current_user.email, current_user.username, False, ip, location, now
-                    )
-                except Exception:
-                    pass
+                threading.Thread(
+                    target=send_2fa_changed_email,
+                    args=(current_user.email, current_user.username, False, ip, location, now),
+                    daemon=False,
+                ).start()
 
         return redirect(url_for('profile'))
 
