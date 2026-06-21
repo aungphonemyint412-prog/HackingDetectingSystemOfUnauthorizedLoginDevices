@@ -815,13 +815,12 @@ def login():
                 else:
                     flash('Welcome back!', 'success')
                     if not app.config.get('TESTING', False):
-                        try:
-                            send_login_notification_email(
-                                user.email, user.username, ip,
-                                geo['location'], ua, datetime.utcnow(),
-                            )
-                        except Exception:
-                            pass
+                        threading.Thread(
+                            target=send_login_notification_email,
+                            args=(user.email, user.username, ip,
+                                  geo['location'], ua, datetime.utcnow()),
+                            daemon=False,
+                        ).start()
 
                 next_page = request.args.get('next')
                 return redirect(next_page or url_for('dashboard'))
@@ -959,13 +958,12 @@ def verify_2fa():
             else:
                 flash('Verification successful. Welcome back!', 'success')
                 if record and not app.config.get('TESTING', False):
-                    try:
-                        send_login_notification_email(
-                            user.email, user.username, ip,
-                            record.location or '', ua, datetime.utcnow(),
-                        )
-                    except Exception:
-                        pass
+                    threading.Thread(
+                        target=send_login_notification_email,
+                        args=(user.email, user.username, ip,
+                              record.location or '', ua, datetime.utcnow()),
+                        daemon=False,
+                    ).start()
             return redirect(url_for('dashboard'))
 
         else:
@@ -1060,13 +1058,12 @@ def verify_login_code():
             else:
                 flash('Welcome back!', 'success')
                 if not app.config.get('TESTING', False):
-                    try:
-                        send_login_notification_email(
-                            user.email, user.username, ip,
-                            geo.get('location', ''), ua, datetime.utcnow(),
-                        )
-                    except Exception:
-                        pass
+                    threading.Thread(
+                        target=send_login_notification_email,
+                        args=(user.email, user.username, ip,
+                              geo.get('location', ''), ua, datetime.utcnow()),
+                        daemon=False,
+                    ).start()
             return redirect(url_for('dashboard'))
         else:
             flash('Wrong code selected. Please try again.', 'danger')
@@ -1633,13 +1630,12 @@ def simulate():
     elif scenario == 'test_email':
         ip = get_client_ip(); ua_raw = request.headers.get('User-Agent', '')
         ua = parse_user_agent(ua_raw)
-        all_users = User.query.filter_by(email_verified=True).all()
-        results = []
-        for u in all_users:
-            sent = send_alert_email(u.email, u.username, ip, ua,
-                                    ['Test alert from HDS Testing Panel'], now)
-            results.append(f'{u.email} ({"✓" if sent else "✗"})')
-        flash(f'Test alert sent to all accounts: {", ".join(results)}', 'success')
+        threading.Thread(
+            target=send_alert_email,
+            args=(user.email, user.username, ip, ua, ['Test alert from HDS Testing Panel'], now),
+            daemon=False,
+        ).start()
+        flash(f'Test security alert sent to {user.email}.', 'success')
 
     elif scenario == 'test_otp_email':
         code = generate_otp()
