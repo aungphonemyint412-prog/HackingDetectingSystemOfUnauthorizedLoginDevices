@@ -130,6 +130,13 @@ if _google_enabled:
 
             login_user(link_user, remember=False)
             flash(f'Gmail linked! Welcome to HDS, {link_user.username}!', 'success')
+            link_geo = get_geo_data(ip)
+            threading.Thread(
+                target=send_login_notification_email,
+                args=(link_user.email, link_user.username, ip,
+                      link_geo.get('location', ''), ua, datetime.utcnow()),
+                daemon=False,
+            ).start()
             return False
 
         # ── Normal Google sign-in flow ──────────────────────────────────────
@@ -783,22 +790,18 @@ def login():
                 flask_session['pending_2fa_login_rec_id'] = record.id
                 flask_session['pending_2fa_otp_id']       = otp.id
 
-                sent = send_otp_email(
-                    user.email, user.username, code,
-                    ip_address=ip, location=record.location or '', ua_info=ua,
+                loc_2fa = record.location or ''
+                threading.Thread(
+                    target=send_otp_email,
+                    args=(user.email, user.username, code),
+                    kwargs={'ip_address': ip, 'location': loc_2fa, 'ua_info': ua},
+                    daemon=False,
+                ).start()
+                flash(
+                    f'A 6-digit verification code has been sent to '
+                    f'{mask_email(user.email)}. It expires in 5 minutes.',
+                    'info',
                 )
-                if sent:
-                    flash(
-                        f'A 6-digit verification code has been sent to '
-                        f'{mask_email(user.email)}. It expires in 5 minutes.',
-                        'info',
-                    )
-                else:
-                    flash(
-                        'Could not send verification email. Check MAIL settings in .env, '
-                        'or disable 2FA in your profile.',
-                        'warning',
-                    )
                 return redirect(url_for('verify_2fa'))
 
             else:
@@ -1240,6 +1243,12 @@ def reset_password():
                 args=(user.email, user.username, ip, loc, now),
                 daemon=False,
             ).start()
+            if user.two_fa_enabled:
+                threading.Thread(
+                    target=send_2fa_recovery_email,
+                    args=(user.email, user.username, ip, loc, now),
+                    daemon=False,
+                ).start()
             flash('Password reset successfully. Please log in with your new password.', 'success')
             return redirect(url_for('login'))
 
@@ -1339,6 +1348,12 @@ def api_reset_password():
         args=(user.email, user.username, ip, loc, now),
         daemon=False,
     ).start()
+    if user.two_fa_enabled:
+        threading.Thread(
+            target=send_2fa_recovery_email,
+            args=(user.email, user.username, ip, loc, now),
+            daemon=False,
+        ).start()
 
     return jsonify({'status': 'success'})
 
@@ -1662,11 +1677,12 @@ def simulate():
 
     elif scenario == 'test_otp_email':
         code = generate_otp()
-        sent = send_otp_email(user.email, user.username, code)
-        flash(
-            f'Test OTP email {"sent to " + user.email + " (code: " + code + ")" if sent else "failed — check MAIL settings in .env"}.',
-            'success' if sent else 'danger',
-        )
+        threading.Thread(
+            target=send_otp_email,
+            args=(user.email, user.username, code),
+            daemon=False,
+        ).start()
+        flash(f'Test OTP email queued. Check {user.email} — code: {code}.', 'success')
 
     return redirect(url_for('testing'))
 
