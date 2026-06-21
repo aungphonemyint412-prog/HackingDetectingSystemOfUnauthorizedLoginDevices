@@ -151,35 +151,38 @@ if _google_enabled:
 
         user = get_or_create_google_user(info)
         if not user:
-            flash('Google authentication failed.', 'danger')
+            flash(
+                f'No HDS account found for {info.get("email", "this Gmail")}. '
+                'Please register first, then link your Gmail from your profile.',
+                'danger',
+            )
             return False
 
         ip     = get_client_ip()
         ua_raw = request.headers.get('User-Agent', '')
-        ua     = parse_user_agent(ua_raw)
 
-        record = _record_login(user, 'success', ua, ip, ua_raw)
-        db.session.flush()
-        is_susp = _run_detection_and_commit(user, record, ip, ua)
-        update_known_ip(user.id, ip)
-        update_known_device(user.id, ua_raw, ua)
-        user.last_login = datetime.utcnow()
+        # Every login must verify via Gmail code — same as password login
+        code = str(secrets.randbelow(90) + 10)  # 10–99
+        otp  = OTPCode(
+            user_id    = user.id,
+            code       = code,
+            expires_at = datetime.utcnow() + timedelta(minutes=5),
+            ip_address = ip,
+        )
+        db.session.add(otp)
         db.session.commit()
-
-        login_user(user, remember=False)
-
-        if is_susp:
-            flash(f'Logged in via Google — suspicious activity detected. '
-                  f'An alert was sent to {user.email}.', 'warning')
-        else:
-            flash(f'Welcome, {user.username}!', 'success')
-            geo = get_geo_data(ip)
-            threading.Thread(
-                target=send_login_notification_email,
-                args=(user.email, user.username, ip, geo.get('location', ''), ua, datetime.utcnow()),
-                daemon=False,
-            ).start()
-
+        flask_session['pending_login_code_user_id'] = user.id
+        flask_session['pending_login_code_otp_id']  = otp.id
+        threading.Thread(
+            target=send_login_code_email,
+            args=(user.email, user.username, code, ip),
+            daemon=False,
+        ).start()
+        flash(
+            f'A 2-digit login code has been sent to {mask_email(user.email)}. '
+            'Enter it to complete your login.',
+            'info',
+        )
         return False  # don't store the OAuth token in the session
 else:
     pass
@@ -549,38 +552,30 @@ def _run_detection_and_commit(user: User, record: LoginHistory,
 
 
 def get_or_create_google_user(info: dict) -> 'User | None':
-    """Get or create a user from Google OAuth user-info dict."""
+    """Find an existing HDS account linked to this Google identity.
+    Returns None if no account exists — login is blocked, no auto-registration."""
     email     = info.get('email', '')
     google_id = info.get('id', '')
-    name      = info.get('name', email.split('@')[0])
     pic       = info.get('picture', '')
 
     if not email:
         return None
 
-    user = User.query.filter_by(email=email).first()
-    if user:
-        if not user.google_id:
-            user.google_id   = google_id
-            user.profile_pic = pic
-            db.session.commit()
-        return user
+    # Match by google_id first, then fall back to email
+    user = User.query.filter_by(google_id=google_id).first()
+    if not user:
+        user = User.query.filter_by(email=email).first()
 
-    # Ensure unique username
-    username = name
-    counter  = 1
-    while User.query.filter_by(username=username).first():
-        username = f'{name}{counter}'
-        counter += 1
+    if not user:
+        return None  # No account — must register first
 
-    new_user = User(
-        username=username, email=email,
-        google_id=google_id, profile_pic=pic,
-        email_verified=True,
-    )
-    db.session.add(new_user)
-    db.session.commit()
-    return new_user
+    # Keep google_id and profile_pic in sync
+    if not user.google_id or user.profile_pic != pic:
+        user.google_id   = google_id
+        user.profile_pic = pic
+        db.session.commit()
+
+    return user
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -710,6 +705,10 @@ def register():
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
+
+    # Google OAuth sets pending_login_code session; forward user to verify step
+    if request.method == 'GET' and flask_session.get('pending_login_code_user_id'):
+        return redirect(url_for('verify_login_code'))
 
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
