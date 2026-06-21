@@ -160,7 +160,11 @@ with sync_playwright() as pw:
     # 4. Login page GET with pending session -> forwards to verify-login-code
     # ═══════════════════════════════════════════════════════════════
     print("\n[4] Password login -> redirect to /login GET -> auto-forward to verify-login-code")
+    # Ensure logged out before this step (step 3 may have ended at /dashboard)
+    page.goto(f"{BASE}/logout")
+    page.wait_for_load_state("networkidle")
     page.goto(f"{BASE}/login")
+    page.wait_for_load_state("networkidle")
     page.fill('input[name="username"]', USERNAME)
     page.fill('input[name="password"]', PASSWORD)
     page.click('button[type="submit"]')
