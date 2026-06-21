@@ -3,6 +3,7 @@ Hacking Detection System of Unauthorized Login to the Device
 Flask Application – Main entry point
 """
 import os
+import re
 import secrets
 import threading
 from datetime import datetime, timedelta
@@ -151,11 +152,7 @@ if _google_enabled:
 
         user = get_or_create_google_user(info)
         if not user:
-            flash(
-                f'No HDS account found for {info.get("email", "this Gmail")}. '
-                'Please register first, then link your Gmail from your profile.',
-                'danger',
-            )
+            flash('Google login failed — could not retrieve email from Google.', 'danger')
             return False
 
         ip     = get_client_ip()
@@ -552,8 +549,7 @@ def _run_detection_and_commit(user: User, record: LoginHistory,
 
 
 def get_or_create_google_user(info: dict) -> 'User | None':
-    """Find an existing HDS account linked to this Google identity.
-    Returns None if no account exists — login is blocked, no auto-registration."""
+    """Find or create an HDS account for this Google identity."""
     email     = info.get('email', '')
     google_id = info.get('id', '')
     pic       = info.get('picture', '')
@@ -567,7 +563,25 @@ def get_or_create_google_user(info: dict) -> 'User | None':
         user = User.query.filter_by(email=email).first()
 
     if not user:
-        return None  # No account — must register first
+        # Auto-register: derive a unique username from the email prefix
+        base = re.sub(r'[^a-z0-9_]', '', email.split('@')[0].lower()) or 'user'
+        username = base
+        suffix = 1
+        while User.query.filter_by(username=username).first():
+            username = f'{base}{suffix}'
+            suffix  += 1
+
+        user = User(
+            username       = username,
+            email          = email,
+            google_id      = google_id,
+            profile_pic    = pic,
+            email_verified = True,
+        )
+        user.set_password(secrets.token_hex(32))
+        db.session.add(user)
+        db.session.commit()
+        return user
 
     # Keep google_id and profile_pic in sync
     if not user.google_id or user.profile_pic != pic:
