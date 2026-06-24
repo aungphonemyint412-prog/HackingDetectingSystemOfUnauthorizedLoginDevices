@@ -187,7 +187,10 @@ else:
 
 @login_manager.user_loader
 def load_user(user_id: str):
-    return User.query.get(int(user_id))
+    user = User.query.get(int(user_id))
+    if user and user.is_locked:
+        return None  # Instantly kills any active session for locked accounts
+    return user
 
 
 @app.before_request
@@ -1320,7 +1323,10 @@ def security_confirm(token: str):
         if rec:
             rec.user_confirmed = True
     db.session.commit()
-    flash('Login confirmed as legitimate. Thank you for keeping your account secure.', 'success')
+    flash('Login confirmed. Your account is safe and secure.', 'success')
+    # If user is already logged in, go straight to dashboard
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
     return redirect(url_for('login'))
 
 
@@ -1344,7 +1350,7 @@ def security_deny(token: str):
     else:
         db.session.commit()
     flash(
-        'Your account has been secured and locked. '
+        'Your account has been secured. You have been logged out. '
         'Use "Forgot password?" to reset your password and regain access.',
         'warning',
     )
