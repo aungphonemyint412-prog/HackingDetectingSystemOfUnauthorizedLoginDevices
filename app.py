@@ -1318,16 +1318,17 @@ def security_confirm(token: str):
         flash('This confirmation link is invalid or has expired.', 'danger')
         return redirect(url_for('login'))
     tok.is_used = True
+    user = User.query.get(tok.user_id)
     if tok.login_history_id:
         rec = LoginHistory.query.get(tok.login_history_id)
         if rec:
             rec.user_confirmed = True
     db.session.commit()
-    flash('Login confirmed. Your account is safe and secure.', 'success')
-    # If user is already logged in, go straight to dashboard
-    if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
-    return redirect(url_for('login'))
+    # Auto-login the user so they land directly on dashboard
+    if user and not current_user.is_authenticated:
+        login_user(user, remember=False)
+    flash('Login confirmed. Your account is safe.', 'success')
+    return redirect(url_for('dashboard'))
 
 
 @app.route('/security/deny/<token>')
@@ -1349,9 +1350,12 @@ def security_deny(token: str):
             ).start()
     else:
         db.session.commit()
+    # Force logout any active session
+    logout_user()
+    flask_session.clear()
     flash(
-        'Your account has been secured. You have been logged out. '
-        'Use "Forgot password?" to reset your password and regain access.',
+        'Your account has been secured and you have been logged out. '
+        'Use "Forgot password?" to regain access.',
         'warning',
     )
     return redirect(url_for('login'))
