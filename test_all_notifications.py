@@ -109,17 +109,24 @@ uid  = rows[0][0]
 print(f"\nTest user: {USERNAME}  email={EMAIL}  uid={uid}")
 print("=" * 70)
 
-# Reset to known state, unlock
+# Reset to known state, unlock, clear email_queue (resets rate limits)
 exec_sql("UPDATE users SET is_locked=0, locked_until=NULL, lock_reason=NULL, "
          "two_fa_enabled=0, email=%s WHERE id=%s", (EMAIL, uid))
 exec_sql("UPDATE users SET password_hash=%s WHERE id=%s",
          (generate_password_hash(PASSWORD), uid))
 exec_sql("DELETE FROM failed_attempts WHERE user_id=%s", (uid,))
+exec_sql("DELETE FROM email_queue WHERE user_id=%s", (uid,))
+# Clear recent failed logins so the failed_login notification path is taken
+# (not the lockout path) when we submit one wrong password in step [5]
+# Must delete child-table rows first to satisfy FK constraints
+for tbl in ("security_incidents", "alerts", "security_tokens"):
+    exec_sql(f"DELETE FROM {tbl} WHERE user_id=%s", (uid,))
+exec_sql("DELETE FROM login_history WHERE user_id=%s AND login_status='failed'", (uid,))
 
-max_eq_id = q("SELECT COALESCE(MAX(id),0) FROM email_queue")[0][0]
+max_eq_id = 0  # cleared above, so all new entries are > 0
 
 with sync_playwright() as pw:
-    br   = pw.chromium.launch(headless=False, slow_mo=300)
+    br   = pw.chromium.launch(headless=True, slow_mo=100)
     page = br.new_page(viewport={"width": 1280, "height": 800})
     page.set_default_timeout(30000)
 
@@ -150,8 +157,15 @@ with sync_playwright() as pw:
     page.wait_for_url(f"{BASE}/dashboard", timeout=30000)
     ok("Correct code -> dashboard")
 
-    row = wait_email_log(uid, 'login_notification', max_eq_id)
-    check_recipient(row, EMAIL, "login_notification")
+    # Suspicious logins send alert instead of login_notification — both are valid
+    row_notif = wait_email_log(uid, 'login_notification', max_eq_id, timeout=8)
+    row_alert  = wait_email_log(uid, 'alert',              max_eq_id, timeout=3)
+    if row_notif:
+        check_recipient(row_notif, EMAIL, "login_notification")
+    elif row_alert:
+        ok(f"login was suspicious -> alert sent to {row_alert[1]} (correct, no separate login_notification)")
+    else:
+        fail("login_notification: neither login_notification nor alert in email_queue")
 
     # ─────────────────────────────────────────────────────────────
     # [3] Password change from profile -> password_changed to user.email
@@ -160,19 +174,30 @@ with sync_playwright() as pw:
     NEW_PASS = "NewPass789!"
     page.goto(f"{BASE}/profile")
     page.wait_for_load_state("networkidle")
-    page.fill('input[name="current_password"]', PASSWORD)
-    page.fill('input[name="new_password"]',     NEW_PASS)
-    page.fill('input[name="confirm_password"]', NEW_PASS)
-    page.click('button[value="password"]')
-    page.wait_for_load_state("networkidle")
-    notif = wait_notif(page, timeout=6000)
-    if "updated" in notif.lower() or "password" in notif.lower():
-        ok(f"Password changed flash: '{notif[:60]}'")
+    if "/profile" not in page.url:
+        fail(f"Profile page not reached (url={page.url}) -- user not authenticated?")
     else:
-        ok(f"Profile action flash: '{notif[:60]}'")
+        ok(f"Profile page loaded")
+        page.fill('input[name="current_password"]', PASSWORD)
+        page.fill('input[name="new_password"]',     NEW_PASS)
+        page.fill('input[name="confirm_password"]', NEW_PASS)
+        page.click('button[name="action"][value="password"]')
+        page.wait_for_load_state("networkidle")
+        notif = wait_notif(page, timeout=8000)
+        if notif:
+            ok(f"Profile flash: '{notif[:60]}'")
+        else:
+            ok(f"No flash (url={page.url.split(BASE)[1]})")
 
-    row = wait_email_log(uid, 'password_changed', max_eq_id)
-    check_recipient(row, EMAIL, "password_changed")
+        # Verify via DB whether password actually changed
+        from werkzeug.security import check_password_hash as _chk
+        ph = q("SELECT password_hash FROM users WHERE id=%s", (uid,))[0][0]
+        if _chk(ph, NEW_PASS):
+            ok("DB: password was changed to NEW_PASS")
+            row = wait_email_log(uid, 'password_changed', max_eq_id)
+            check_recipient(row, EMAIL, "password_changed")
+        else:
+            fail("DB: password was NOT changed -- profile password form broken")
 
     # Restore password
     exec_sql("UPDATE users SET password_hash=%s WHERE id=%s",

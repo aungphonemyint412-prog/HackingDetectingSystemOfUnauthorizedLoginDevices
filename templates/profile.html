@@ -57,8 +57,8 @@
   <!-- ── Edit Form ─────────────────────────────────────────────── -->
   <div class="col-lg-8">
 
+    <!-- Update Email -->
     <form method="POST" action="{{ url_for('profile') }}">
-      <!-- Update Email -->
       <div class="hds-card mb-4">
         <div class="hds-card-header">
           <i class="fas fa-envelope me-2 text-primary"></i>Update Email Address
@@ -79,9 +79,10 @@
           </button>
         </div>
       </div>
+    </form>
 
-      <!-- Two-Factor Authentication -->
-      <div class="hds-card mb-4">
+    <!-- Two-Factor Authentication -->
+    <div class="hds-card mb-4">
         <div class="hds-card-header d-flex align-items-center justify-content-between">
           <span><i class="fas fa-mobile-screen-button me-2 text-primary"></i>Two-Factor Authentication</span>
           {% if current_user.two_fa_enabled %}
@@ -135,6 +136,7 @@
       </div>
 
       <!-- Change Password -->
+      <form method="POST" action="{{ url_for('profile') }}">
       <div class="hds-card">
         <div class="hds-card-header">
           <i class="fas fa-lock me-2 text-primary"></i>Change Password
@@ -170,7 +172,7 @@
           </button>
         </div>
       </div>
-    </form>
+      </form>
 
   </div>
 </div>
