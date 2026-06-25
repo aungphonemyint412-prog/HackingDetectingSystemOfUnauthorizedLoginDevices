@@ -138,6 +138,9 @@ if _google_enabled:
                       link_geo.get('location', ''), ua, datetime.utcnow()),
                 daemon=False,
             ).start()
+            _log_email(link_user.id, link_user.email, 'login_notification',
+                       '[HDS] New sign-in to your account', True)
+            db.session.commit()
             return False
 
         # ── Normal Google sign-in flow ──────────────────────────────────────
@@ -175,6 +178,8 @@ if _google_enabled:
             args=(user.email, user.username, code, ip),
             daemon=False,
         ).start()
+        _log_email(user.id, user.email, 'login_code', '[HDS] Login Verification Code', True)
+        db.session.commit()
         flash(
             f'A 2-digit login code has been sent to {mask_email(user.email)}. '
             'Enter it to complete your login.',
@@ -704,6 +709,9 @@ def register():
                 args=(user.email, user.username, code),
                 daemon=False,
             ).start()
+            _log_email(user.id, user.email, 'email_verification',
+                       '[HDS] Email Verification Code', True)
+            db.session.commit()
             flash(
                 f'A 2-digit verification code has been sent to {user.email}. '
                 'Enter it to complete your registration.',
@@ -778,6 +786,9 @@ def login():
                     args=(user.email, user.username, code, ip),
                     daemon=False,
                 ).start()
+                _log_email(user.id, user.email, 'login_code',
+                           '[HDS] Login Verification Code', True)
+                db.session.commit()
                 flash(
                     f'A 2-digit login code has been sent to {mask_email(user.email)}. '
                     'Enter it to complete your login.',
@@ -934,6 +945,9 @@ def verify_2fa():
                               record.location or '', ua, datetime.utcnow()),
                         daemon=False,
                     ).start()
+                    _log_email(user.id, user.email, 'login_notification',
+                               '[HDS] New sign-in to your account', True)
+                    db.session.commit()
             return redirect(url_for('dashboard'))
 
         else:
@@ -1034,6 +1048,9 @@ def verify_login_code():
                               geo.get('location', ''), ua, datetime.utcnow()),
                         daemon=False,
                     ).start()
+                    _log_email(user.id, user.email, 'login_notification',
+                               '[HDS] New sign-in to your account', True)
+                    db.session.commit()
             return redirect(url_for('dashboard'))
         else:
             flash('Incorrect code. Please check your email and try again.', 'danger')
@@ -1195,12 +1212,17 @@ def reset_password():
                 args=(user.email, user.username, ip, loc, now),
                 daemon=False,
             ).start()
+            _log_email(user.id, user.email, 'password_changed',
+                       '[HDS] Your password was changed', True)
             if user.two_fa_enabled:
                 threading.Thread(
                     target=send_2fa_recovery_email,
                     args=(user.email, user.username, ip, loc, now),
                     daemon=False,
                 ).start()
+                _log_email(user.id, user.email, '2fa_recovery',
+                           '[HDS] Password reset completed — 2FA still active', True)
+            db.session.commit()
             flash('Password reset successfully. Please log in with your new password.', 'success')
             return redirect(url_for('login'))
 
@@ -1238,6 +1260,8 @@ def api_send_reset_code():
         kwargs={'expires_minutes': 10, 'purpose': 'reset'},
         daemon=False,
     ).start()
+    _log_email(user.id, user.email, 'otp', f'[HDS] Your password reset code: {code}', True)
+    db.session.commit()
 
     return jsonify({'status': 'success'})
 
@@ -1484,6 +1508,9 @@ def profile():
                                   old_email, new_email, ip, location, now),
                             daemon=False,
                         ).start()
+                        _log_email(current_user.id, new_email, 'email_changed',
+                                   '[HDS] Your email address was changed', True)
+                        db.session.commit()
             else:
                 db.session.commit()
 
@@ -1504,6 +1531,9 @@ def profile():
                         args=(current_user.email, current_user.username, ip, location, now),
                         daemon=False,
                     ).start()
+                    _log_email(current_user.id, current_user.email, 'password_changed',
+                               '[HDS] Your password was changed', True)
+                    db.session.commit()
 
         elif action == 'enable_2fa':
             current_user.two_fa_enabled = True
@@ -1515,6 +1545,9 @@ def profile():
                     args=(current_user.email, current_user.username, True, ip, location, now),
                     daemon=False,
                 ).start()
+                _log_email(current_user.id, current_user.email, '2fa_changed',
+                           '[HDS] Two-Factor Authentication enabled', True)
+                db.session.commit()
 
         elif action == 'disable_2fa':
             current_user.two_fa_enabled = False
@@ -1526,6 +1559,9 @@ def profile():
                     args=(current_user.email, current_user.username, False, ip, location, now),
                     daemon=False,
                 ).start()
+                _log_email(current_user.id, current_user.email, '2fa_changed',
+                           '[HDS] Two-Factor Authentication disabled', True)
+                db.session.commit()
 
         return redirect(url_for('profile'))
 
