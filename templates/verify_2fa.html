@@ -10,11 +10,17 @@
       <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
     </div>
 
+    <!-- Step indicator -->
+    <div class="d-flex align-items-center gap-2 justify-content-center mb-3">
+      <span class="badge bg-primary px-3 py-2" style="border-radius:20px;">Step 1 of 2</span>
+      <span class="text-muted small">→ Step 2: Login Code</span>
+    </div>
+
     <h2 class="auth-title">Two-Factor Verification</h2>
     <p class="auth-subtitle">
-      We sent a 6-digit code to
+      Enter the <strong>6-digit 2FA code</strong> sent to
       <strong class="text-primary">{{ masked_email }}</strong>.
-      Enter it below to complete your login.
+      After this you'll enter a 2-digit login code.
     </p>
 
     <form method="POST" action="{{ url_for('verify_2fa') }}" id="otpForm">

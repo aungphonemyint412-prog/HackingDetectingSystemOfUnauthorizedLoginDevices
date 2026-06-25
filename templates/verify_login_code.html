@@ -10,9 +10,23 @@
       <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
     </div>
 
+    {% if from_2fa %}
+    <!-- Step indicator for 2FA users -->
+    <div class="d-flex align-items-center gap-2 justify-content-center mb-3">
+      <span class="badge bg-success px-3 py-2" style="border-radius:20px;">
+        <i class="fas fa-check me-1"></i>Step 1 done
+      </span>
+      <span class="badge bg-primary px-3 py-2" style="border-radius:20px;">Step 2 of 2</span>
+    </div>
+    {% endif %}
+
     <h2 class="auth-title">Verify Your Login</h2>
     <p class="auth-subtitle">
-      A 2-digit security code was sent to
+      {% if from_2fa %}
+        2FA passed! Now enter the <strong>2-digit login code</strong> sent to
+      {% else %}
+        A 2-digit security code was sent to
+      {% endif %}
       <strong class="text-primary">{{ masked_email }}</strong>.
       Open your Gmail and enter the code below.
     </p>

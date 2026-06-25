@@ -768,33 +768,63 @@ def login():
                 return render_template('login.html', client_ip=get_client_ip())
 
         if user and user.check_password(password):
-            # ── Mandatory 2-digit login code (always, unless in test mode) ─
             if not app.config.get('TESTING', False):
-                code = str(secrets.randbelow(90) + 10)  # 10–99
-                otp  = OTPCode(
-                    user_id          = user.id,
-                    code             = code,
-                    expires_at       = datetime.utcnow() + timedelta(minutes=5),
-                    ip_address       = ip,
-                )
-                db.session.add(otp)
-                db.session.commit()
-                flask_session['pending_login_code_user_id'] = user.id
-                flask_session['pending_login_code_otp_id']  = otp.id
-                threading.Thread(
-                    target=send_login_code_email,
-                    args=(user.email, user.username, code, ip),
-                    daemon=False,
-                ).start()
-                _log_email(user.id, user.email, 'login_code',
-                           '[HDS] Login Verification Code', True)
-                db.session.commit()
-                flash(
-                    f'A 2-digit login code has been sent to {mask_email(user.email)}. '
-                    'Enter it to complete your login.',
-                    'info',
-                )
-                return redirect(url_for('verify_login_code'))
+                if user.two_fa_enabled:
+                    # ── Step 1 of 2: 6-digit 2FA code ─────────────────────
+                    code = generate_otp()
+                    otp  = OTPCode(
+                        user_id    = user.id,
+                        code       = code,
+                        expires_at = datetime.utcnow() + timedelta(minutes=5),
+                        ip_address = ip,
+                    )
+                    db.session.add(otp)
+                    db.session.commit()
+                    flask_session['pending_2fa_user_id'] = user.id
+                    flask_session['pending_2fa_otp_id']  = otp.id
+                    flask_session.pop('pending_2fa_login_rec_id', None)
+                    threading.Thread(
+                        target=send_otp_email,
+                        args=(user.email, user.username, code),
+                        kwargs={'expires_minutes': 5, 'ip_address': ip, 'purpose': 'login'},
+                        daemon=False,
+                    ).start()
+                    _log_email(user.id, user.email, 'otp',
+                               f'[HDS] Your login verification code: {code}', True)
+                    db.session.commit()
+                    flash(
+                        f'A 6-digit 2FA code has been sent to {mask_email(user.email)}. '
+                        'Enter it to complete step 1 of 2.',
+                        'info',
+                    )
+                    return redirect(url_for('verify_2fa'))
+                else:
+                    # ── No 2FA: single 2-digit login code ─────────────────
+                    code = str(secrets.randbelow(90) + 10)  # 10–99
+                    otp  = OTPCode(
+                        user_id    = user.id,
+                        code       = code,
+                        expires_at = datetime.utcnow() + timedelta(minutes=5),
+                        ip_address = ip,
+                    )
+                    db.session.add(otp)
+                    db.session.commit()
+                    flask_session['pending_login_code_user_id'] = user.id
+                    flask_session['pending_login_code_otp_id']  = otp.id
+                    threading.Thread(
+                        target=send_login_code_email,
+                        args=(user.email, user.username, code, ip),
+                        daemon=False,
+                    ).start()
+                    _log_email(user.id, user.email, 'login_code',
+                               '[HDS] Login Verification Code', True)
+                    db.session.commit()
+                    flash(
+                        f'A 2-digit login code has been sent to {mask_email(user.email)}. '
+                        'Enter it to complete your login.',
+                        'info',
+                    )
+                    return redirect(url_for('verify_login_code'))
             # ── TESTING mode only: skip email, log in directly ──────────────
             geo    = get_geo_data(ip)
             record = _record_login(user, 'success', ua, ip, ua_raw, geo=geo)
@@ -915,54 +945,47 @@ def verify_2fa():
 
         if otp and not otp.is_used and not otp.is_expired and otp.code == entered:
             otp.is_used = True
-            if record:
-                record.login_status    = 'success'
-                record.two_fa_verified = True
-
-            db.session.flush()
-            is_susp = _run_detection_and_commit(user, record, ip, ua) if record else False
-            update_known_ip(user.id, ip)
-            update_known_device(user.id, ua_raw, ua)
-            user.last_login = datetime.utcnow()
             db.session.commit()
 
             for k in ('pending_2fa_user_id', 'pending_2fa_login_rec_id', 'pending_2fa_otp_id'):
                 flask_session.pop(k, None)
 
-            login_user(user, remember=False)
-            if is_susp:
-                flash(
-                    'Verification successful — but suspicious activity was detected. '
-                    f'An alert has been sent to {user.email}.',
-                    'warning',
-                )
-            else:
-                flash('Verification successful. Welcome back!', 'success')
-                if record and not app.config.get('TESTING', False):
-                    threading.Thread(
-                        target=send_login_notification_email,
-                        args=(user.email, user.username, ip,
-                              record.location or '', ua, datetime.utcnow()),
-                        daemon=False,
-                    ).start()
-                    _log_email(user.id, user.email, 'login_notification',
-                               '[HDS] New sign-in to your account', True)
-                    db.session.commit()
-            return redirect(url_for('dashboard'))
+            # ── Step 2 of 2: 2-digit login code ───────────────────────────
+            code_2d = str(secrets.randbelow(90) + 10)
+            otp_2d  = OTPCode(
+                user_id    = user.id,
+                code       = code_2d,
+                expires_at = datetime.utcnow() + timedelta(minutes=5),
+                ip_address = ip,
+            )
+            db.session.add(otp_2d)
+            db.session.commit()
+            flask_session['pending_login_code_user_id'] = user.id
+            flask_session['pending_login_code_otp_id']  = otp_2d.id
+            flask_session['pending_login_code_from_2fa'] = True
+            threading.Thread(
+                target=send_login_code_email,
+                args=(user.email, user.username, code_2d, ip),
+                daemon=False,
+            ).start()
+            _log_email(user.id, user.email, 'login_code',
+                       '[HDS] Login Verification Code', True)
+            db.session.commit()
+            flash(
+                f'2FA verified! A 2-digit login code has been sent to '
+                f'{mask_email(user.email)}. Enter it to complete step 2 of 2.',
+                'success',
+            )
+            return redirect(url_for('verify_login_code'))
 
         else:
-            if record:
-                record.login_status    = 'failed_2fa'
-                record.two_fa_verified = False
-                db.session.commit()
-
             for k in ('pending_2fa_user_id', 'pending_2fa_login_rec_id', 'pending_2fa_otp_id'):
                 flask_session.pop(k, None)
 
             if otp and otp.is_expired:
-                flash('Verification code expired. Please log in again.', 'danger')
+                flash('2FA code expired. Please log in again.', 'danger')
             else:
-                flash('Invalid verification code. Please log in again.', 'danger')
+                flash('Invalid 2FA code. Please log in again.', 'danger')
             return redirect(url_for('login'))
 
     return render_template('verify_2fa.html',
@@ -1035,6 +1058,7 @@ def verify_login_code():
             db.session.commit()
             flask_session.pop('pending_login_code_user_id', None)
             flask_session.pop('pending_login_code_otp_id', None)
+            flask_session.pop('pending_login_code_from_2fa', None)
             login_user(user, remember=False)
             if is_susp:
                 flash('Login successful — suspicious activity detected. '
@@ -1057,7 +1081,8 @@ def verify_login_code():
 
     return render_template('verify_login_code.html',
                            masked_email=mask_email(user.email),
-                           ip_address=get_client_ip())
+                           ip_address=get_client_ip(),
+                           from_2fa=flask_session.get('pending_login_code_from_2fa', False))
 
 
 # ── Resend OTP ────────────────────────────────────────────────────────────
