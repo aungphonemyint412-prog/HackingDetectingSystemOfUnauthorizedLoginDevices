@@ -125,9 +125,9 @@
               </p>
             </div>
           </div>
-          <form method="POST" action="{{ url_for('profile') }}">
-            <button type="submit" name="action" value="enable_2fa"
-                    class="btn btn-success btn-sm">
+          <form method="POST" action="{{ url_for('profile') }}" id="enable2faForm">
+            <button type="button" class="btn btn-success btn-sm"
+                    data-bs-toggle="modal" data-bs-target="#enable2faModal">
               <i class="fas fa-shield-halved me-1"></i>Enable 2FA
             </button>
           </form>
@@ -174,6 +174,51 @@
       </div>
       </form>
 
+  </div>
+</div>
+
+<!-- Enable 2FA Confirmation Modal -->
+<div class="modal fade" id="enable2faModal" tabindex="-1" aria-labelledby="enable2faModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:16px;overflow:hidden;border:none;box-shadow:0 20px 60px rgba(0,0,0,.15);">
+
+      <div class="modal-header border-0 pb-0" style="background:#f0fdf4;">
+        <div class="d-flex align-items-center gap-3 w-100 pt-2 pb-1">
+          <div style="width:48px;height:48px;background:#dcfce7;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <i class="fas fa-shield-halved text-success fs-5"></i>
+          </div>
+          <div>
+            <h5 class="modal-title fw-bold mb-0" id="enable2faModalLabel">Enable Two-Factor Authentication?</h5>
+            <p class="text-muted small mb-0">Add an extra layer of security to your account.</p>
+          </div>
+        </div>
+        <button type="button" class="btn-close ms-auto align-self-start mt-1" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body pt-3" style="background:#f0fdf4;">
+        <div style="background:#fff;border:1px solid #bbf7d0;border-radius:12px;padding:16px 18px;">
+          <p class="mb-2 small fw-semibold text-success"><i class="fas fa-circle-check me-1"></i>You will gain these protections:</p>
+          <ul class="mb-0 small text-muted ps-3">
+            <li>6-digit one-time code required at every login</li>
+            <li>Email alert if someone logs in from a new device</li>
+            <li>Extra barrier even if your password is stolen</li>
+          </ul>
+        </div>
+        <p class="text-muted small mt-3 mb-0">
+          A 2FA code will be sent to <strong>{{ current_user.email }}</strong> each time you log in.
+        </p>
+      </div>
+
+      <div class="modal-footer border-0 pt-0" style="background:#f0fdf4;">
+        <button type="button" class="btn btn-light btn-sm px-4" data-bs-dismiss="modal">
+          <i class="fas fa-xmark me-1"></i>Cancel
+        </button>
+        <button type="button" class="btn btn-success btn-sm px-4" id="confirmEnable2fa">
+          <i class="fas fa-shield-halved me-1"></i>Yes, Enable 2FA
+        </button>
+      </div>
+
+    </div>
   </div>
 </div>
 
@@ -225,6 +270,16 @@
 
 {% block scripts %}
 <script>
+document.getElementById('confirmEnable2fa').addEventListener('click', function () {
+  const form = document.getElementById('enable2faForm');
+  const input = document.createElement('input');
+  input.type  = 'hidden';
+  input.name  = 'action';
+  input.value = 'enable_2fa';
+  form.appendChild(input);
+  form.submit();
+});
+
 document.getElementById('confirmDisable2fa').addEventListener('click', function () {
   const form = document.getElementById('disable2faForm');
   const input = document.createElement('input');
