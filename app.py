@@ -1611,6 +1611,20 @@ def profile():
     return render_template('profile.html', login_count=login_count)
 
 
+@app.route('/admin/env-debug')
+@login_required
+def env_debug():
+    keys = sorted(os.environ.keys())
+    mail_keys = [k for k in keys if 'MAIL' in k or 'RESEND' in k or 'SECRET' in k or 'GOOGLE' in k or 'DATABASE' in k]
+    return jsonify({
+        'total_env_vars': len(keys),
+        'resend_key_set':    bool(os.environ.get('RESEND_API_KEY')),
+        'resend_key_prefix': os.environ.get('RESEND_API_KEY', '')[:6] or 'NOT SET',
+        'mail_username_set': bool(os.environ.get('MAIL_USERNAME')),
+        'mail_password_set': bool(os.environ.get('MAIL_PASSWORD')),
+        'security_related_keys': mail_keys,
+    })
+
 # ── SMTP health-check (admin-only, shows whether credentials are configured) ──
 @app.route('/admin/smtp-check')
 @login_required
