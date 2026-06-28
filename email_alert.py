@@ -36,40 +36,77 @@ def _credentials() -> tuple[str, str]:
     return os.environ.get('MAIL_USERNAME', ''), os.environ.get('MAIL_PASSWORD', '')
 
 
+def _send_via_resend(msg: MIMEMultipart) -> bool:
+    """Send using Resend HTTP API — works on Railway (no SMTP port needed)."""
+    import requests as _req
+    api_key = os.environ.get('RESEND_API_KEY', '')
+    if not api_key:
+        return None  # not configured, fall through to SMTP
+    sender, _ = _credentials()
+    from_addr = f'HDS Security <{sender}>' if sender else 'HDS Security <noreply@hds.dev>'
+    # Extract plain and html parts from MIMEMultipart
+    plain_text = html_text = ''
+    for part in msg.walk():
+        ct = part.get_content_type()
+        if ct == 'text/plain':
+            plain_text = part.get_payload(decode=True).decode('utf-8', errors='replace')
+        elif ct == 'text/html':
+            html_text  = part.get_payload(decode=True).decode('utf-8', errors='replace')
+    try:
+        r = _req.post(
+            'https://api.resend.com/emails',
+            headers={'Authorization': f'Bearer {api_key}',
+                     'Content-Type': 'application/json'},
+            json={
+                'from':    from_addr,
+                'to':      [msg['To']],
+                'subject': msg['Subject'],
+                'html':    html_text or plain_text,
+                'text':    plain_text,
+            },
+            timeout=15,
+        )
+        if r.status_code in (200, 201):
+            return True
+        print(f'[email_alert] Resend API error {r.status_code}: {r.text[:200]}')
+        return False
+    except Exception as exc:
+        print(f'[email_alert] Resend API exception: {exc}')
+        return False
+
+
 def _smtp_send_blocking(msg: MIMEMultipart, retries: int = 3) -> bool:
+    # Try Resend API first (works on Railway where SMTP is blocked)
+    resend_result = _send_via_resend(msg)
+    if resend_result is not None:
+        return resend_result
+
+    # Fall back to SMTP (for local dev without Resend key)
     sender, app_pwd = _credentials()
     if not sender or not app_pwd:
         return False
     for attempt in range(retries):
-        try:
-            # Try port 465 (SSL) first — Railway blocks 587 (STARTTLS)
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=15) as srv:
-                srv.login(sender, app_pwd)
-                srv.sendmail(sender, msg['To'], msg.as_string())
-            return True
-        except Exception as exc:
-            print(f'[email_alert] Attempt {attempt + 1}/{retries} failed (465/SSL): {exc}')
-            # Fallback to port 587 STARTTLS
+        for port, use_ssl in [(465, True), (587, False)]:
             try:
-                with smtplib.SMTP('smtp.gmail.com', 587, timeout=15) as srv:
-                    srv.ehlo()
-                    srv.starttls()
-                    srv.login(sender, app_pwd)
-                    srv.sendmail(sender, msg['To'], msg.as_string())
+                if use_ssl:
+                    with smtplib.SMTP_SSL('smtp.gmail.com', port, timeout=15) as srv:
+                        srv.login(sender, app_pwd)
+                        srv.sendmail(sender, msg['To'], msg.as_string())
+                else:
+                    with smtplib.SMTP('smtp.gmail.com', port, timeout=15) as srv:
+                        srv.ehlo(); srv.starttls()
+                        srv.login(sender, app_pwd)
+                        srv.sendmail(sender, msg['To'], msg.as_string())
                 return True
-            except Exception as exc2:
-                print(f'[email_alert] Attempt {attempt + 1}/{retries} failed (587/TLS): {exc2}')
-            if attempt < retries - 1:
-                time.sleep(1)
+            except Exception as exc:
+                print(f'[email_alert] SMTP port {port} attempt {attempt+1} failed: {exc}')
+        if attempt < retries - 1:
+            time.sleep(1)
     return False
 
 
 def _smtp_send(msg: MIMEMultipart, retries: int = 3) -> bool:
-    """Fire-and-forget: sends in a background thread without blocking the response.
-    Uses daemon=False so Railway containers don't kill the thread before SMTP completes."""
-    sender, app_pwd = _credentials()
-    if not sender or not app_pwd:
-        return False
+    """Fire-and-forget: sends in a background thread without blocking the response."""
     t = threading.Thread(target=_smtp_send_blocking, args=(msg, retries), daemon=False)
     t.start()
     return True

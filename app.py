@@ -1623,7 +1623,11 @@ def smtp_check():
             'smtp_configured': False,
             'error': 'MAIL_USERNAME or MAIL_PASSWORD env var not set on Railway',
         })
-    # Try port 465 (SSL) first, fallback to 587 (STARTTLS)
+    resend_key = os.environ.get('RESEND_API_KEY', '')
+    if resend_key:
+        return jsonify({'method': 'resend_api', 'sender': mail_user,
+                        'status': 'configured', 'resend_key_set': True})
+    # Fall back: test SMTP directly
     for port, use_ssl in [(465, True), (587, False)]:
         try:
             if use_ssl:
@@ -1632,11 +1636,11 @@ def smtp_check():
             else:
                 with smtplib.SMTP('smtp.gmail.com', port, timeout=10) as srv:
                     srv.ehlo(); srv.starttls(); srv.login(mail_user, mail_pass)
-            return jsonify({'smtp_configured': True, 'sender': mail_user,
+            return jsonify({'method': 'smtp', 'sender': mail_user,
                             'status': 'login_ok', 'port': port})
         except Exception as exc:
             last_err = str(exc)
-    return jsonify({'smtp_configured': True, 'sender': mail_user,
+    return jsonify({'method': 'smtp', 'sender': mail_user,
                     'status': 'login_failed', 'error': last_err})
 
 
