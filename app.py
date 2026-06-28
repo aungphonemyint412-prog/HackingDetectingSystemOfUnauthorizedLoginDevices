@@ -1611,6 +1611,29 @@ def profile():
     return render_template('profile.html', login_count=login_count)
 
 
+# ── SMTP health-check (admin-only, shows whether credentials are configured) ──
+@app.route('/admin/smtp-check')
+@login_required
+def smtp_check():
+    import smtplib
+    mail_user = os.environ.get('MAIL_USERNAME', '')
+    mail_pass = os.environ.get('MAIL_PASSWORD', '')
+    if not mail_user or not mail_pass:
+        return jsonify({
+            'smtp_configured': False,
+            'error': 'MAIL_USERNAME or MAIL_PASSWORD env var not set on Railway',
+        })
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as srv:
+            srv.ehlo()
+            srv.starttls()
+            srv.login(mail_user, mail_pass)
+        return jsonify({'smtp_configured': True, 'sender': mail_user, 'status': 'login_ok'})
+    except Exception as exc:
+        return jsonify({'smtp_configured': True, 'sender': mail_user,
+                        'status': 'login_failed', 'error': str(exc)})
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # TESTING / SIMULATION ROUTES
 # ══════════════════════════════════════════════════════════════════════════
