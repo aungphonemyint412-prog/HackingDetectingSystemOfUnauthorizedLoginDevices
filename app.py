@@ -1614,16 +1614,17 @@ def profile():
 @app.route('/admin/env-debug')
 @login_required
 def env_debug():
-    keys = sorted(os.environ.keys())
+    import subprocess
+    sub = subprocess.run(['printenv', 'RESEND_API_KEY'],
+                        capture_output=True, text=True)
     return jsonify({
-        'total_env_vars': len(keys),
-        'resend_key_set':    bool(os.environ.get('RESEND_API_KEY')),
-        'resend_key_prefix': os.environ.get('RESEND_API_KEY', '')[:6] or 'NOT SET',
-        'mail_username_set': bool(os.environ.get('MAIL_USERNAME')),
-        'railway_env':       os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'unknown'),
-        'railway_service':   os.environ.get('RAILWAY_SERVICE_NAME', 'unknown'),
-        'railway_project':   os.environ.get('RAILWAY_PROJECT_NAME', 'unknown'),
-        'railway_commit':    os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:10],
+        'total_env_vars':         len(os.environ),
+        'resend_in_os_environ':   'RESEND_API_KEY' in os.environ,
+        'resend_os_prefix':       os.environ.get('RESEND_API_KEY', '')[:6] or 'NOT SET',
+        'resend_subprocess':      sub.stdout.strip()[:6] or 'NOT SET',
+        'mail_username_set':      bool(os.environ.get('MAIL_USERNAME')),
+        'railway_env':            os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'unknown'),
+        'railway_commit':         os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:10],
     })
 
 # ── SMTP health-check (admin-only, shows whether credentials are configured) ──
