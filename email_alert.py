@@ -36,9 +36,9 @@ def _credentials() -> tuple[str, str]:
     return os.environ.get('MAIL_USERNAME', ''), os.environ.get('MAIL_PASSWORD', '')
 
 
-def _get_resend_key() -> str:
-    """Read Resend API key from env var first, then DB fallback (Railway v2 bug workaround)."""
-    key = os.environ.get('RESEND_API_KEY', '')
+def _get_email_api_key(key_name: str) -> str:
+    """Read API key from env var first, then DB (Railway v2 env var bug workaround)."""
+    key = os.environ.get(key_name, '')
     if key:
         return key
     try:
@@ -47,32 +47,29 @@ def _get_resend_key() -> str:
         if not db_url:
             return ''
         import re as _re
-        m = _re.match(r'mysql\+pymysql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', db_url)
+        m = _re.match(r'mysql(?:\+pymysql)?://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', db_url)
         if not m:
             return ''
         conn = pymysql.connect(host=m.group(3), port=int(m.group(4)),
                                user=m.group(1), password=m.group(2),
                                database=m.group(5), connect_timeout=5)
         with conn.cursor() as c:
-            c.execute("SELECT val FROM app_config WHERE key_name='RESEND_API_KEY' LIMIT 1")
+            c.execute("SELECT val FROM app_config WHERE key_name=%s LIMIT 1", (key_name,))
             row = c.fetchone()
         conn.close()
         return row[0] if row else ''
     except Exception as exc:
-        print(f'[email_alert] DB key lookup failed: {exc}')
+        print(f'[email_alert] DB key lookup ({key_name}) failed: {exc}')
         return ''
 
 
-def _send_via_resend(msg: MIMEMultipart) -> bool:
-    """Send using Resend HTTP API — works on Railway (no SMTP port needed)."""
+def _send_via_brevo(msg: MIMEMultipart) -> bool:
+    """Send using Brevo (Sendinblue) HTTP API — no domain verification needed."""
     import requests as _req
-    api_key = _get_resend_key()
+    api_key = _get_email_api_key('BREVO_API_KEY')
     if not api_key:
-        return None  # not configured, fall through to SMTP
-    sender, _ = _credentials()
-    # Resend requires a verified domain as FROM; use their free test sender
-    from_addr = 'HDS Security <onboarding@resend.dev>'
-    # Extract plain and html parts from MIMEMultipart
+        return None  # not configured, fall through
+    sender_email, _ = _credentials()
     plain_text = html_text = ''
     for part in msg.walk():
         ct = part.get_content_type()
@@ -82,32 +79,31 @@ def _send_via_resend(msg: MIMEMultipart) -> bool:
             html_text  = part.get_payload(decode=True).decode('utf-8', errors='replace')
     try:
         r = _req.post(
-            'https://api.resend.com/emails',
-            headers={'Authorization': f'Bearer {api_key}',
-                     'Content-Type': 'application/json'},
+            'https://api.brevo.com/v3/smtp/email',
+            headers={'api-key': api_key, 'Content-Type': 'application/json'},
             json={
-                'from':    from_addr,
-                'to':      [msg['To']],
-                'subject': msg['Subject'],
-                'html':    html_text or plain_text,
-                'text':    plain_text,
+                'sender':      {'email': sender_email or 'noreply@hds.dev', 'name': 'HDS Security'},
+                'to':          [{'email': msg['To']}],
+                'subject':     msg['Subject'],
+                'htmlContent': html_text or f'<pre>{plain_text}</pre>',
+                'textContent': plain_text,
             },
             timeout=15,
         )
         if r.status_code in (200, 201):
             return True
-        print(f'[email_alert] Resend API error {r.status_code}: {r.text[:200]}')
+        print(f'[email_alert] Brevo API error {r.status_code}: {r.text[:300]}')
         return False
     except Exception as exc:
-        print(f'[email_alert] Resend API exception: {exc}')
+        print(f'[email_alert] Brevo API exception: {exc}')
         return False
 
 
 def _smtp_send_blocking(msg: MIMEMultipart, retries: int = 3) -> bool:
-    # Try Resend API first (works on Railway where SMTP is blocked)
-    resend_result = _send_via_resend(msg)
-    if resend_result is not None:
-        return resend_result
+    # Try Brevo API first (works on Railway, no domain verification needed)
+    brevo_result = _send_via_brevo(msg)
+    if brevo_result is not None:
+        return brevo_result
 
     # Fall back to SMTP (for local dev without Resend key)
     sender, app_pwd = _credentials()

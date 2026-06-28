@@ -61,19 +61,24 @@ else:
     print('[hds] WARNING: MAIL_USERNAME or MAIL_PASSWORD env var is missing — '
           'email delivery will be silent-fail', flush=True)
 
-# Load RESEND_API_KEY from DB if Railway env var injection is broken (v2 runtime workaround)
-if not os.environ.get('RESEND_API_KEY'):
+# Load email API keys from DB if Railway env var injection is broken (v2 runtime workaround)
+def _load_key_from_db(key_name: str) -> None:
+    if os.environ.get(key_name):
+        return
     try:
         with app.app_context():
             from sqlalchemy import text as _sql_text
             _row = db.session.execute(
-                _sql_text("SELECT val FROM app_config WHERE key_name='RESEND_API_KEY' LIMIT 1")
+                _sql_text(f"SELECT val FROM app_config WHERE key_name='{key_name}' LIMIT 1")
             ).fetchone()
             if _row:
-                os.environ['RESEND_API_KEY'] = _row[0]
-                print('[hds] RESEND_API_KEY loaded from app_config table', flush=True)
+                os.environ[key_name] = _row[0]
+                print(f'[hds] {key_name} loaded from app_config table', flush=True)
     except Exception as _e:
-        print(f'[hds] Could not load RESEND_API_KEY from DB: {_e}', flush=True)
+        print(f'[hds] Could not load {key_name} from DB: {_e}', flush=True)
+
+_load_key_from_db('BREVO_API_KEY')
+_load_key_from_db('RESEND_API_KEY')
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
