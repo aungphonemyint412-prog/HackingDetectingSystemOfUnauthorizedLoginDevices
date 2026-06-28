@@ -92,11 +92,14 @@ def _send_via_brevo(msg: MIMEMultipart) -> bool:
         )
         if r.status_code in (200, 201):
             return True
+        if r.status_code == 403:
+            print(f'[email_alert] Brevo not activated – falling back to SMTP')
+            return None  # fall through to SMTP fallback
         print(f'[email_alert] Brevo API error {r.status_code}: {r.text[:300]}')
-        return False
+        return None  # always fall through on error so SMTP can try
     except Exception as exc:
         print(f'[email_alert] Brevo API exception: {exc}')
-        return False
+        return None  # fall through to SMTP fallback
 
 
 def _smtp_send_blocking(msg: MIMEMultipart, retries: int = 3) -> bool:
