@@ -36,10 +36,37 @@ def _credentials() -> tuple[str, str]:
     return os.environ.get('MAIL_USERNAME', ''), os.environ.get('MAIL_PASSWORD', '')
 
 
+def _get_resend_key() -> str:
+    """Read Resend API key from env var first, then DB fallback (Railway v2 bug workaround)."""
+    key = os.environ.get('RESEND_API_KEY', '')
+    if key:
+        return key
+    try:
+        import pymysql
+        db_url = os.environ.get('DATABASE_URL', '')
+        if not db_url:
+            return ''
+        import re as _re
+        m = _re.match(r'mysql\+pymysql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', db_url)
+        if not m:
+            return ''
+        conn = pymysql.connect(host=m.group(3), port=int(m.group(4)),
+                               user=m.group(1), password=m.group(2),
+                               database=m.group(5), connect_timeout=5)
+        with conn.cursor() as c:
+            c.execute("SELECT val FROM app_config WHERE key_name='RESEND_API_KEY' LIMIT 1")
+            row = c.fetchone()
+        conn.close()
+        return row[0] if row else ''
+    except Exception as exc:
+        print(f'[email_alert] DB key lookup failed: {exc}')
+        return ''
+
+
 def _send_via_resend(msg: MIMEMultipart) -> bool:
     """Send using Resend HTTP API — works on Railway (no SMTP port needed)."""
     import requests as _req
-    api_key = os.environ.get('RESEND_API_KEY', '')
+    api_key = _get_resend_key()
     if not api_key:
         return None  # not configured, fall through to SMTP
     sender, _ = _credentials()
