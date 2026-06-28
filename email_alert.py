@@ -42,14 +42,23 @@ def _smtp_send_blocking(msg: MIMEMultipart, retries: int = 3) -> bool:
         return False
     for attempt in range(retries):
         try:
-            with smtplib.SMTP('smtp.gmail.com', 587, timeout=15) as srv:
-                srv.ehlo()
-                srv.starttls()
+            # Try port 465 (SSL) first — Railway blocks 587 (STARTTLS)
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=15) as srv:
                 srv.login(sender, app_pwd)
                 srv.sendmail(sender, msg['To'], msg.as_string())
             return True
         except Exception as exc:
-            print(f'[email_alert] Attempt {attempt + 1}/{retries} failed: {exc}')
+            print(f'[email_alert] Attempt {attempt + 1}/{retries} failed (465/SSL): {exc}')
+            # Fallback to port 587 STARTTLS
+            try:
+                with smtplib.SMTP('smtp.gmail.com', 587, timeout=15) as srv:
+                    srv.ehlo()
+                    srv.starttls()
+                    srv.login(sender, app_pwd)
+                    srv.sendmail(sender, msg['To'], msg.as_string())
+                return True
+            except Exception as exc2:
+                print(f'[email_alert] Attempt {attempt + 1}/{retries} failed (587/TLS): {exc2}')
             if attempt < retries - 1:
                 time.sleep(1)
     return False

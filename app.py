@@ -1623,15 +1623,21 @@ def smtp_check():
             'smtp_configured': False,
             'error': 'MAIL_USERNAME or MAIL_PASSWORD env var not set on Railway',
         })
-    try:
-        with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as srv:
-            srv.ehlo()
-            srv.starttls()
-            srv.login(mail_user, mail_pass)
-        return jsonify({'smtp_configured': True, 'sender': mail_user, 'status': 'login_ok'})
-    except Exception as exc:
-        return jsonify({'smtp_configured': True, 'sender': mail_user,
-                        'status': 'login_failed', 'error': str(exc)})
+    # Try port 465 (SSL) first, fallback to 587 (STARTTLS)
+    for port, use_ssl in [(465, True), (587, False)]:
+        try:
+            if use_ssl:
+                with smtplib.SMTP_SSL('smtp.gmail.com', port, timeout=10) as srv:
+                    srv.login(mail_user, mail_pass)
+            else:
+                with smtplib.SMTP('smtp.gmail.com', port, timeout=10) as srv:
+                    srv.ehlo(); srv.starttls(); srv.login(mail_user, mail_pass)
+            return jsonify({'smtp_configured': True, 'sender': mail_user,
+                            'status': 'login_ok', 'port': port})
+        except Exception as exc:
+            last_err = str(exc)
+    return jsonify({'smtp_configured': True, 'sender': mail_user,
+                    'status': 'login_failed', 'error': last_err})
 
 
 # ══════════════════════════════════════════════════════════════════════════
