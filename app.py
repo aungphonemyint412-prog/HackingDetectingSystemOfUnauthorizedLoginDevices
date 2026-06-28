@@ -1617,11 +1617,13 @@ def env_debug():
     keys = sorted(os.environ.keys())
     return jsonify({
         'total_env_vars': len(keys),
-        'all_keys': keys,
         'resend_key_set':    bool(os.environ.get('RESEND_API_KEY')),
         'resend_key_prefix': os.environ.get('RESEND_API_KEY', '')[:6] or 'NOT SET',
         'mail_username_set': bool(os.environ.get('MAIL_USERNAME')),
-        'mail_password_set': bool(os.environ.get('MAIL_PASSWORD')),
+        'railway_env':       os.environ.get('RAILWAY_ENVIRONMENT_NAME', 'unknown'),
+        'railway_service':   os.environ.get('RAILWAY_SERVICE_NAME', 'unknown'),
+        'railway_project':   os.environ.get('RAILWAY_PROJECT_NAME', 'unknown'),
+        'railway_commit':    os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:10],
     })
 
 # ── SMTP health-check (admin-only, shows whether credentials are configured) ──
