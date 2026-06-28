@@ -70,7 +70,8 @@ def _send_via_resend(msg: MIMEMultipart) -> bool:
     if not api_key:
         return None  # not configured, fall through to SMTP
     sender, _ = _credentials()
-    from_addr = f'HDS Security <{sender}>' if sender else 'HDS Security <noreply@hds.dev>'
+    # Resend requires a verified domain as FROM; use their free test sender
+    from_addr = 'HDS Security <onboarding@resend.dev>'
     # Extract plain and html parts from MIMEMultipart
     plain_text = html_text = ''
     for part in msg.walk():
