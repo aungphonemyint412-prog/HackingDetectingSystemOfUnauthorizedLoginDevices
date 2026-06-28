@@ -52,6 +52,15 @@ app.config.from_object(Config)
 
 db.init_app(app)
 
+# Startup check — shows in Railway logs so SMTP misconfiguration is visible
+_mail_user = os.environ.get('MAIL_USERNAME', '')
+_mail_pass = os.environ.get('MAIL_PASSWORD', '')
+if _mail_user and _mail_pass:
+    print(f'[hds] SMTP configured: sender={_mail_user}', flush=True)
+else:
+    print('[hds] WARNING: MAIL_USERNAME or MAIL_PASSWORD env var is missing — '
+          'email delivery will be silent-fail', flush=True)
+
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Please log in to access this page.'
@@ -132,15 +141,13 @@ if _google_enabled:
             login_user(link_user, remember=False)
             flash(f'Gmail linked! Welcome to HDS, {link_user.username}!', 'success')
             link_geo = get_geo_data(ip)
-            threading.Thread(
-                target=send_login_notification_email,
-                args=(link_user.email, link_user.username, ip,
-                      link_geo.get('location', ''), ua, datetime.utcnow()),
-                daemon=False,
-            ).start()
-            _log_email(link_user.id, link_user.email, 'login_notification',
-                       '[HDS] New sign-in to your account', True)
-            db.session.commit()
+            _log_and_send(
+                link_user.id, link_user.email, 'login_notification',
+                '[HDS] New sign-in to your account',
+                send_login_notification_email,
+                (link_user.email, link_user.username, ip,
+                 link_geo.get('location', ''), ua, datetime.utcnow()),
+            )
             return False
 
         # ── Normal Google sign-in flow ──────────────────────────────────────
@@ -173,13 +180,10 @@ if _google_enabled:
         db.session.commit()
         flask_session['pending_login_code_user_id'] = user.id
         flask_session['pending_login_code_otp_id']  = otp.id
-        threading.Thread(
-            target=send_login_code_email,
-            args=(user.email, user.username, code, ip),
-            daemon=False,
-        ).start()
-        _log_email(user.id, user.email, 'login_code', '[HDS] Login Verification Code', True)
-        db.session.commit()
+        _log_and_send(
+            user.id, user.email, 'login_code', '[HDS] Login Verification Code',
+            send_login_code_email, (user.email, user.username, code, ip),
+        )
         flash(
             f'A 2-digit login code has been sent to {mask_email(user.email)}. '
             'Enter it to complete your login.',
@@ -371,6 +375,44 @@ def _log_skipped_email(user_id, recipient: str, email_type: str, subject: str) -
         user_id=user_id, recipient=recipient, email_type=email_type,
         subject=subject, status='skipped',
     ))
+
+
+def _smtp_status_update(entry_id: int, success: bool) -> None:
+    """Called from a delivery thread to write the real SMTP result to email_queue."""
+    try:
+        with app.app_context():
+            entry = db.session.get(EmailQueue, entry_id)
+            if entry and entry.status == 'pending':
+                entry.status  = 'sent' if success else 'failed'
+                entry.sent_at = datetime.utcnow() if success else None
+                if not success:
+                    entry.error_msg = 'SMTP delivery failed — check MAIL_USERNAME/MAIL_PASSWORD env vars'
+                db.session.commit()
+    except Exception as exc:
+        print(f'[hds] email_queue status update failed for id={entry_id}: {exc}')
+
+
+def _log_and_send(user_id, recipient: str, email_type: str, subject: str,
+                  send_fn, send_args: tuple) -> None:
+    """Create a pending email_queue entry, then fire a daemon=False thread that
+    does the SMTP call and updates the status to sent/failed when done."""
+    entry = EmailQueue(
+        user_id    = user_id,
+        recipient  = recipient,
+        email_type = email_type,
+        subject    = subject,
+        status     = 'pending',
+    )
+    db.session.add(entry)
+    db.session.flush()   # get auto-assigned id before commit
+    entry_id = entry.id
+    db.session.commit()
+
+    def _deliver():
+        success = send_fn(*send_args)
+        _smtp_status_update(entry_id, success)
+
+    threading.Thread(target=_deliver, daemon=False).start()
 
 
 def _create_incident(user_id, incident_type: str, severity: str,
@@ -704,14 +746,11 @@ def register():
             db.session.commit()
             flask_session['pending_email_verify_user_id'] = user.id
             flask_session['pending_email_verify_otp_id']  = otp.id
-            threading.Thread(
-                target=send_email_verification_code,
-                args=(user.email, user.username, code),
-                daemon=False,
-            ).start()
-            _log_email(user.id, user.email, 'email_verification',
-                       '[HDS] Email Verification Code', True)
-            db.session.commit()
+            _log_and_send(
+                user.id, user.email, 'email_verification',
+                '[HDS] Email Verification Code',
+                send_email_verification_code, (user.email, user.username, code),
+            )
             flash(
                 f'A 2-digit verification code has been sent to {user.email}. '
                 'Enter it to complete your registration.',
@@ -783,15 +822,16 @@ def login():
                     flask_session['pending_2fa_user_id'] = user.id
                     flask_session['pending_2fa_otp_id']  = otp.id
                     flask_session.pop('pending_2fa_login_rec_id', None)
-                    threading.Thread(
-                        target=send_otp_email,
-                        args=(user.email, user.username, code),
-                        kwargs={'expires_minutes': 5, 'ip_address': ip, 'purpose': 'login'},
-                        daemon=False,
-                    ).start()
-                    _log_email(user.id, user.email, 'otp',
-                               f'[HDS] Your login verification code: {code}', True)
-                    db.session.commit()
+                    _otp_ip = ip
+                    _log_and_send(
+                        user.id, user.email, 'otp',
+                        '[HDS] Your 2FA login code',
+                        lambda em, un, cd: send_otp_email(
+                            em, un, cd, expires_minutes=5,
+                            ip_address=_otp_ip, purpose='login',
+                        ),
+                        (user.email, user.username, code),
+                    )
                     flash(
                         f'A 6-digit 2FA code has been sent to {mask_email(user.email)}. '
                         'Enter it to complete step 1 of 2.',
@@ -811,14 +851,11 @@ def login():
                     db.session.commit()
                     flask_session['pending_login_code_user_id'] = user.id
                     flask_session['pending_login_code_otp_id']  = otp.id
-                    threading.Thread(
-                        target=send_login_code_email,
-                        args=(user.email, user.username, code, ip),
-                        daemon=False,
-                    ).start()
-                    _log_email(user.id, user.email, 'login_code',
-                               '[HDS] Login Verification Code', True)
-                    db.session.commit()
+                    _log_and_send(
+                        user.id, user.email, 'login_code',
+                        '[HDS] Login Verification Code',
+                        send_login_code_email, (user.email, user.username, code, ip),
+                    )
                     flash(
                         f'A 2-digit login code has been sent to {mask_email(user.email)}. '
                         'Enter it to complete your login.',
@@ -860,28 +897,27 @@ def login():
                     _fire_alert(user, record, [reason], ip, ua, alert_type='brute_force')
                     if not app.config.get('TESTING', False):
                         locked_until = user.locked_until
-                        threading.Thread(
-                            target=send_account_locked_email,
-                            args=(user.email, user.username, reason, locked_until),
-                            daemon=False,
-                        ).start()
-                        _log_email(user.id, user.email, 'account_locked',
-                                   '[HDS] Your account has been locked', True)
+                        _log_and_send(
+                            user.id, user.email, 'account_locked',
+                            '[HDS] Your account has been locked',
+                            send_account_locked_email,
+                            (user.email, user.username, reason, locked_until),
+                        )
                 else:
                     # Single failed login notification (rate-limited)
                     if not app.config.get('TESTING', False):
                         if _can_send_email(user.id, 'failed_login'):
                             loc = (record.location or get_location(ip))
-                            _log_email(user.id, user.email, 'failed_login',
-                                       '[HDS] Failed login attempt on your account', True)
-                            threading.Thread(
-                                target=send_failed_login_email,
-                                args=(user.email, user.username, ip, loc, ua, datetime.utcnow()),
-                                daemon=False,
-                            ).start()
+                            _log_and_send(
+                                user.id, user.email, 'failed_login',
+                                '[HDS] Failed login attempt on your account',
+                                send_failed_login_email,
+                                (user.email, user.username, ip, loc, ua, datetime.utcnow()),
+                            )
                         else:
                             _log_skipped_email(user.id, user.email, 'failed_login',
                                                '[HDS] Failed login attempt on your account')
+                            db.session.commit()
 
                 # Credential stuffing detection
                 if _detect_credential_stuffing(ip):
@@ -963,14 +999,11 @@ def verify_2fa():
             flask_session['pending_login_code_user_id'] = user.id
             flask_session['pending_login_code_otp_id']  = otp_2d.id
             flask_session['pending_login_code_from_2fa'] = True
-            threading.Thread(
-                target=send_login_code_email,
-                args=(user.email, user.username, code_2d, ip),
-                daemon=False,
-            ).start()
-            _log_email(user.id, user.email, 'login_code',
-                       '[HDS] Login Verification Code', True)
-            db.session.commit()
+            _log_and_send(
+                user.id, user.email, 'login_code',
+                '[HDS] Login Verification Code',
+                send_login_code_email, (user.email, user.username, code_2d, ip),
+            )
             flash(
                 f'2FA verified! A 2-digit login code has been sent to '
                 f'{mask_email(user.email)}. Enter it to complete step 2 of 2.',
@@ -1066,15 +1099,13 @@ def verify_login_code():
             else:
                 flash('Welcome back!', 'success')
                 if not app.config.get('TESTING', False):
-                    threading.Thread(
-                        target=send_login_notification_email,
-                        args=(user.email, user.username, ip,
-                              geo.get('location', ''), ua, datetime.utcnow()),
-                        daemon=False,
-                    ).start()
-                    _log_email(user.id, user.email, 'login_notification',
-                               '[HDS] New sign-in to your account', True)
-                    db.session.commit()
+                    _log_and_send(
+                        user.id, user.email, 'login_notification',
+                        '[HDS] New sign-in to your account',
+                        send_login_notification_email,
+                        (user.email, user.username, ip,
+                         geo.get('location', ''), ua, datetime.utcnow()),
+                    )
             return redirect(url_for('dashboard'))
         else:
             flash('Incorrect code. Please check your email and try again.', 'danger')
@@ -1232,22 +1263,17 @@ def reset_password():
             ip  = get_client_ip()
             loc = get_location(ip)
             now = datetime.utcnow()
-            threading.Thread(
-                target=send_password_changed_email,
-                args=(user.email, user.username, ip, loc, now),
-                daemon=False,
-            ).start()
-            _log_email(user.id, user.email, 'password_changed',
-                       '[HDS] Your password was changed', True)
+            _log_and_send(
+                user.id, user.email, 'password_changed',
+                '[HDS] Your password was changed',
+                send_password_changed_email, (user.email, user.username, ip, loc, now),
+            )
             if user.two_fa_enabled:
-                threading.Thread(
-                    target=send_2fa_recovery_email,
-                    args=(user.email, user.username, ip, loc, now),
-                    daemon=False,
-                ).start()
-                _log_email(user.id, user.email, '2fa_recovery',
-                           '[HDS] Password reset completed — 2FA still active', True)
-            db.session.commit()
+                _log_and_send(
+                    user.id, user.email, '2fa_recovery',
+                    '[HDS] Password reset completed — 2FA still active',
+                    send_2fa_recovery_email, (user.email, user.username, ip, loc, now),
+                )
             flash('Password reset successfully. Please log in with your new password.', 'success')
             return redirect(url_for('login'))
 
@@ -1278,15 +1304,12 @@ def api_send_reset_code():
     flask_session['pending_reset_user_id'] = user.id
     flask_session['pending_reset_otp_id']  = otp.id
 
-    # Send async (non-daemon thread) so AJAX returns immediately
-    threading.Thread(
-        target=send_otp_email,
-        args=(user.email, user.username, code),
-        kwargs={'expires_minutes': 10, 'purpose': 'reset'},
-        daemon=False,
-    ).start()
-    _log_email(user.id, user.email, 'otp', f'[HDS] Your password reset code: {code}', True)
-    db.session.commit()
+    _log_and_send(
+        user.id, user.email, 'otp',
+        '[HDS] Your password reset code',
+        lambda em, un, cd: send_otp_email(em, un, cd, expires_minutes=10, purpose='reset'),
+        (user.email, user.username, code),
+    )
 
     return jsonify({'status': 'success'})
 
@@ -1527,15 +1550,13 @@ def profile():
                     db.session.commit()
                     flash('Email address updated.', 'success')
                     if not app.config.get('TESTING', False):
-                        threading.Thread(
-                            target=send_email_changed_email,
-                            args=(new_email, current_user.username,
-                                  old_email, new_email, ip, location, now),
-                            daemon=False,
-                        ).start()
-                        _log_email(current_user.id, new_email, 'email_changed',
-                                   '[HDS] Your email address was changed', True)
-                        db.session.commit()
+                        _log_and_send(
+                            current_user.id, new_email, 'email_changed',
+                            '[HDS] Your email address was changed',
+                            send_email_changed_email,
+                            (new_email, current_user.username,
+                             old_email, new_email, ip, location, now),
+                        )
             else:
                 db.session.commit()
 
@@ -1551,42 +1572,36 @@ def profile():
                 db.session.commit()
                 flash('Password updated successfully.', 'success')
                 if not app.config.get('TESTING', False):
-                    threading.Thread(
-                        target=send_password_changed_email,
-                        args=(current_user.email, current_user.username, ip, location, now),
-                        daemon=False,
-                    ).start()
-                    _log_email(current_user.id, current_user.email, 'password_changed',
-                               '[HDS] Your password was changed', True)
-                    db.session.commit()
+                    _log_and_send(
+                        current_user.id, current_user.email, 'password_changed',
+                        '[HDS] Your password was changed',
+                        send_password_changed_email,
+                        (current_user.email, current_user.username, ip, location, now),
+                    )
 
         elif action == 'enable_2fa':
             current_user.two_fa_enabled = True
             db.session.commit()
             flash('Two-Factor Authentication enabled. Your login will now require an email code.', 'success')
             if not app.config.get('TESTING', False):
-                threading.Thread(
-                    target=send_2fa_changed_email,
-                    args=(current_user.email, current_user.username, True, ip, location, now),
-                    daemon=False,
-                ).start()
-                _log_email(current_user.id, current_user.email, '2fa_changed',
-                           '[HDS] Two-Factor Authentication enabled', True)
-                db.session.commit()
+                _log_and_send(
+                    current_user.id, current_user.email, '2fa_changed',
+                    '[HDS] Two-Factor Authentication enabled',
+                    send_2fa_changed_email,
+                    (current_user.email, current_user.username, True, ip, location, now),
+                )
 
         elif action == 'disable_2fa':
             current_user.two_fa_enabled = False
             db.session.commit()
             flash('Two-Factor Authentication disabled.', 'info')
             if not app.config.get('TESTING', False):
-                threading.Thread(
-                    target=send_2fa_changed_email,
-                    args=(current_user.email, current_user.username, False, ip, location, now),
-                    daemon=False,
-                ).start()
-                _log_email(current_user.id, current_user.email, '2fa_changed',
-                           '[HDS] Two-Factor Authentication disabled', True)
-                db.session.commit()
+                _log_and_send(
+                    current_user.id, current_user.email, '2fa_changed',
+                    '[HDS] Two-Factor Authentication disabled',
+                    send_2fa_changed_email,
+                    (current_user.email, current_user.username, False, ip, location, now),
+                )
 
         return redirect(url_for('profile'))
 
