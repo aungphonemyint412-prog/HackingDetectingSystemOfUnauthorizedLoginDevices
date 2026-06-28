@@ -102,13 +102,58 @@ def _send_via_brevo(msg: MIMEMultipart) -> bool:
         return None  # fall through to SMTP fallback
 
 
+def _send_via_gmail_api(msg: MIMEMultipart) -> bool:
+    """Send via Gmail REST API over HTTPS — works on Railway where SMTP is blocked."""
+    import base64
+    import requests as _req
+    refresh_token = _get_email_api_key('GMAIL_REFRESH_TOKEN')
+    if not refresh_token:
+        return None
+    client_id     = os.environ.get('GOOGLE_CLIENT_ID', '')
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    if not client_id or not client_secret:
+        return None
+    try:
+        tok = _req.post('https://oauth2.googleapis.com/token', data={
+            'client_id':     client_id,
+            'client_secret': client_secret,
+            'refresh_token': refresh_token,
+            'grant_type':    'refresh_token',
+        }, timeout=10)
+        if tok.status_code != 200:
+            print(f'[email_alert] Gmail token refresh failed: {tok.text[:200]}')
+            return None
+        access_token = tok.json().get('access_token', '')
+        if not access_token:
+            return None
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode('utf-8')
+        resp = _req.post(
+            'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+            json={'raw': raw},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        print(f'[email_alert] Gmail API send failed {resp.status_code}: {resp.text[:200]}')
+        return None
+    except Exception as exc:
+        print(f'[email_alert] Gmail API exception: {exc}')
+        return None
+
+
 def _smtp_send_blocking(msg: MIMEMultipart, retries: int = 3) -> bool:
-    # Try Brevo API first (works on Railway, no domain verification needed)
+    # 1. Try Brevo (HTTP API, works on Railway)
     brevo_result = _send_via_brevo(msg)
     if brevo_result is not None:
         return brevo_result
 
-    # Fall back to SMTP (for local dev without Resend key)
+    # 2. Try Gmail API (HTTPS, works on Railway even when SMTP is blocked)
+    gmail_result = _send_via_gmail_api(msg)
+    if gmail_result is not None:
+        return gmail_result
+
+    # 3. Fall back to SMTP (local dev only)
     sender, app_pwd = _credentials()
     if not sender or not app_pwd:
         return False

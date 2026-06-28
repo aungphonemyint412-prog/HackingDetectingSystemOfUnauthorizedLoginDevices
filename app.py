@@ -79,6 +79,7 @@ def _load_key_from_db(key_name: str) -> None:
 
 _load_key_from_db('BREVO_API_KEY')
 _load_key_from_db('RESEND_API_KEY')
+_load_key_from_db('GMAIL_REFRESH_TOKEN')
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
