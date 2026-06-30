@@ -200,13 +200,20 @@ if _google_enabled:
         db.session.commit()
         flask_session['pending_login_code_user_id'] = user.id
         flask_session['pending_login_code_otp_id']  = otp.id
+        if user.two_fa_enabled:
+            flask_session['pending_2fa_after_login_code'] = True
+            step_msg = 'Step 1 of 2: A'
+            extra    = ' After this you will enter your 6-digit 2FA code.'
+        else:
+            flask_session.pop('pending_2fa_after_login_code', None)
+            step_msg = 'A'
+            extra    = ''
         _log_and_send(
             user.id, user.email, 'login_code', '[HDS] Login Verification Code',
             send_login_code_email, (user.email, user.username, code, ip),
         )
         flash(
-            f'A 2-digit login code has been sent to {mask_email(user.email)}. '
-            'Enter it to complete your login.',
+            f'{step_msg} 2-digit login code has been sent to {mask_email(user.email)}.{extra}',
             'info',
         )
         return False  # don't store the OAuth token in the session
@@ -788,7 +795,7 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
+        logout_user()
 
     # Google OAuth sets pending_login_code session; forward user to verify step
     if request.method == 'GET' and flask_session.get('pending_login_code_user_id'):
