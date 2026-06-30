@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+{% block title %}Enable 2FA – HDS{% endblock %}
+
+{% block content %}
+<div class="auth-page">
+  <div class="auth-card">
+
+    <div class="auth-brand">
+      <i class="fas fa-shield-halved text-success"></i>
+      <h4 class="mb-0 ms-2 fw-bold">HDS</h4>
+    </div>
+
+    <h2 class="auth-title">Confirm 2FA Setup</h2>
+    <p class="auth-subtitle">
+      A <strong>6-digit verification code</strong> was sent to
+      <strong class="text-primary">{{ masked_email }}</strong>.
+      Enter it below to activate Two-Factor Authentication.
+    </p>
+
+    <form method="POST" action="{{ url_for('verify_2fa_setup') }}" id="otpForm">
+      <div class="mb-4">
+        <label class="form-label fw-semibold">Verification Code</label>
+        <div class="otp-boxes d-flex gap-2 justify-content-center my-3" id="otpBoxes">
+          {% for i in range(6) %}
+          <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]"
+                 class="otp-box form-control text-center fw-bold fs-4"
+                 autocomplete="off" data-index="{{ i }}">
+          {% endfor %}
+        </div>
+        <input type="hidden" name="otp_code" id="otpHidden">
+      </div>
+
+      <button type="submit" class="btn btn-success w-100 py-2 fw-semibold" id="verifyBtn" disabled>
+        <i class="fas fa-shield-halved me-2"></i>Activate 2FA
+      </button>
+    </form>
+
+    <div class="text-center mt-3">
+      <small class="text-muted">
+        Code expires in <span id="countdown" class="fw-semibold text-primary">5:00</span>
+      </small>
+    </div>
+
+    <p class="text-center mt-3 text-muted small">
+      <a href="{{ url_for('profile') }}" class="auth-link">Cancel — back to profile</a>
+    </p>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const boxes  = Array.from(document.querySelectorAll('.otp-box'));
+const hidden = document.getElementById('otpHidden');
+const btn    = document.getElementById('verifyBtn');
+
+function updateHidden() {
+  const val = boxes.map(b => b.value).join('');
+  hidden.value = val;
+  btn.disabled = val.length < 6;
+}
+
+boxes.forEach((box, i) => {
+  box.addEventListener('input', () => {
+    box.value = box.value.replace(/\D/, '');
+    if (box.value && i < 5) boxes[i + 1].focus();
+    updateHidden();
+  });
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Backspace' && !box.value && i > 0) {
+      boxes[i - 1].focus();
+      boxes[i - 1].value = '';
+      updateHidden();
+    }
+  });
+  box.addEventListener('paste', e => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '');
+    text.split('').slice(0, 6).forEach((ch, idx) => { if (boxes[idx]) boxes[idx].value = ch; });
+    boxes[Math.min(text.length, 5)].focus();
+    updateHidden();
+  });
+});
+
+document.getElementById('otpForm').addEventListener('submit', () => {
+  hidden.value = boxes.map(b => b.value).join('');
+});
+
+let total = 5 * 60;
+const cdEl = document.getElementById('countdown');
+const cdTimer = setInterval(() => {
+  total--;
+  if (total <= 0) {
+    clearInterval(cdTimer);
+    cdEl.textContent = 'Expired';
+    cdEl.classList.replace('text-primary', 'text-danger');
+    btn.disabled = true;
+  } else {
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    cdEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+    if (total <= 60) cdEl.classList.replace('text-primary', 'text-warning');
+  }
+}, 1000);
+
+boxes[0].focus();
+</script>
+
+<style>
+.otp-box {
+  width: 48px !important;
+  height: 56px;
+  border-radius: 10px;
+  border: 2px solid #e2e8f0;
+  font-size: 1.4rem;
+  transition: border-color .15s, box-shadow .15s;
+}
+.otp-box:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22,163,74,.15);
+  outline: none;
+}
+.otp-box:not(:placeholder-shown) {
+  border-color: #16a34a;
+  background: #f0fdf4;
+}
+</style>
+{% endblock %}

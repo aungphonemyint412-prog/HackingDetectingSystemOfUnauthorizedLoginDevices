@@ -1600,16 +1600,33 @@ def profile():
                     )
 
         elif action == 'enable_2fa':
-            current_user.two_fa_enabled = True
+            # Send OTP to verify email before activating 2FA
+            code = generate_otp()
+            otp  = OTPCode(
+                user_id    = current_user.id,
+                code       = code,
+                expires_at = datetime.utcnow() + timedelta(minutes=5),
+                ip_address = ip,
+            )
+            db.session.add(otp)
             db.session.commit()
-            flash('Two-Factor Authentication enabled. Your login will now require an email code.', 'success')
-            if not app.config.get('TESTING', False):
-                _log_and_send(
-                    current_user.id, current_user.email, '2fa_changed',
-                    '[HDS] Two-Factor Authentication enabled',
-                    send_2fa_changed_email,
-                    (current_user.email, current_user.username, True, ip, location, now),
-                )
+            flask_session['pending_2fa_setup_otp_id'] = otp.id
+            _otp_ip = ip
+            _log_and_send(
+                current_user.id, current_user.email, 'otp',
+                '[HDS] Confirm your 2FA setup',
+                lambda em, un, cd: send_otp_email(
+                    em, un, cd, expires_minutes=5,
+                    ip_address=_otp_ip, purpose='enable 2FA',
+                ),
+                (current_user.email, current_user.username, code),
+            )
+            flash(
+                f'A 6-digit verification code has been sent to {mask_email(current_user.email)}. '
+                'Enter it to confirm and enable 2FA.',
+                'info',
+            )
+            return redirect(url_for('verify_2fa_setup'))
 
         elif action == 'disable_2fa':
             current_user.two_fa_enabled = False
@@ -1630,6 +1647,47 @@ def profile():
     ).count()
     return render_template('profile.html', login_count=login_count)
 
+
+# ── Verify 2FA setup OTP ──────────────────────────────────────────────────
+@app.route('/verify-2fa-setup', methods=['GET', 'POST'])
+@login_required
+def verify_2fa_setup():
+    otp_id = flask_session.get('pending_2fa_setup_otp_id')
+    if not otp_id:
+        flash('No pending 2FA setup. Please try again.', 'warning')
+        return redirect(url_for('profile'))
+
+    if request.method == 'POST':
+        entered = request.form.get('otp_code', '').strip().replace(' ', '')
+        otp     = OTPCode.query.get(otp_id)
+        ip      = get_client_ip()
+        now     = datetime.utcnow()
+        location = get_location(ip)
+
+        if otp and not otp.is_used and not otp.is_expired and otp.code == entered:
+            otp.is_used = True
+            current_user.two_fa_enabled = True
+            db.session.commit()
+            flask_session.pop('pending_2fa_setup_otp_id', None)
+            flash('Two-Factor Authentication enabled. Your login will now require an email code.', 'success')
+            if not app.config.get('TESTING', False):
+                _log_and_send(
+                    current_user.id, current_user.email, '2fa_changed',
+                    '[HDS] Two-Factor Authentication enabled',
+                    send_2fa_changed_email,
+                    (current_user.email, current_user.username, True, ip, location, now),
+                )
+            return redirect(url_for('profile'))
+        else:
+            flask_session.pop('pending_2fa_setup_otp_id', None)
+            if otp and otp.is_expired:
+                flash('Code expired. Please try enabling 2FA again.', 'danger')
+            else:
+                flash('Invalid code. Please try enabling 2FA again.', 'danger')
+            return redirect(url_for('profile'))
+
+    return render_template('verify_2fa_setup.html',
+                           masked_email=mask_email(current_user.email))
 
 
 # ── SMTP health-check (admin-only, shows whether credentials are configured) ──
