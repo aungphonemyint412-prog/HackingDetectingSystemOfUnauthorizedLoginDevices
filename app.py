@@ -1613,33 +1613,16 @@ def profile():
                     )
 
         elif action == 'enable_2fa':
-            # Send OTP to verify email before activating 2FA
-            code = generate_otp()
-            otp  = OTPCode(
-                user_id    = current_user.id,
-                code       = code,
-                expires_at = datetime.utcnow() + timedelta(minutes=5),
-                ip_address = ip,
-            )
-            db.session.add(otp)
+            current_user.two_fa_enabled = True
             db.session.commit()
-            flask_session['pending_2fa_setup_otp_id'] = otp.id
-            _otp_ip = ip
-            _log_and_send(
-                current_user.id, current_user.email, 'otp',
-                '[HDS] Confirm your 2FA setup',
-                lambda em, un, cd: send_otp_email(
-                    em, un, cd, expires_minutes=5,
-                    ip_address=_otp_ip, purpose='enable 2FA',
-                ),
-                (current_user.email, current_user.username, code),
-            )
-            flash(
-                f'A 6-digit verification code has been sent to {mask_email(current_user.email)}. '
-                'Enter it to confirm and enable 2FA.',
-                'info',
-            )
-            return redirect(url_for('verify_2fa_setup'))
+            flash('Two-Factor Authentication enabled. Your next login will require 2 steps.', 'success')
+            if not app.config.get('TESTING', False):
+                _log_and_send(
+                    current_user.id, current_user.email, '2fa_changed',
+                    '[HDS] Two-Factor Authentication enabled',
+                    send_2fa_changed_email,
+                    (current_user.email, current_user.username, True, ip, location, now),
+                )
 
         elif action == 'disable_2fa':
             current_user.two_fa_enabled = False
