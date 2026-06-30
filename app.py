@@ -1146,7 +1146,7 @@ def verify_login_code():
     return render_template('verify_login_code.html',
                            masked_email=mask_email(user.email),
                            ip_address=get_client_ip(),
-                           from_2fa=flask_session.get('pending_login_code_from_2fa', False))
+                           from_2fa=flask_session.get('pending_2fa_after_login_code', False))
 
 
 # ── Resend OTP ────────────────────────────────────────────────────────────

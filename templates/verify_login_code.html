@@ -13,20 +13,14 @@
     {% if from_2fa %}
     <!-- Step indicator for 2FA users -->
     <div class="d-flex align-items-center gap-2 justify-content-center mb-3">
-      <span class="badge bg-success px-3 py-2" style="border-radius:20px;">
-        <i class="fas fa-check me-1"></i>Step 1 done
-      </span>
-      <span class="badge bg-primary px-3 py-2" style="border-radius:20px;">Step 2 of 2</span>
+      <span class="badge bg-primary px-3 py-2" style="border-radius:20px;">Step 1 of 2</span>
+      <span class="text-muted small">→ Step 2: 2FA Code</span>
     </div>
     {% endif %}
 
     <h2 class="auth-title">Verify Your Login</h2>
     <p class="auth-subtitle">
-      {% if from_2fa %}
-        2FA passed! Now enter the <strong>2-digit login code</strong> sent to
-      {% else %}
-        A 2-digit security code was sent to
-      {% endif %}
+      A 2-digit security code was sent to
       <strong class="text-primary">{{ masked_email }}</strong>.
       Open your Gmail and enter the code below.
     </p>
