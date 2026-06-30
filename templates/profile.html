@@ -65,11 +65,11 @@
         </div>
         <div class="hds-card-body">
           <div class="mb-3">
-            <label for="email" class="form-label">New Email Address</label>
+            <label for="email" class="form-label">Email Address</label>
             <div class="input-group">
               <span class="input-group-text"><i class="fas fa-envelope text-muted"></i></span>
               <input type="email" class="form-control" id="email" name="email"
-                     value="{{ current_user.email }}" placeholder="Enter new email">
+                     value="{{ current_user.email }}" placeholder="{{ current_user.email }}">
             </div>
             <div class="form-text">Security alerts are sent to this address.</div>
           </div>
